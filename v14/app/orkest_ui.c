@@ -481,9 +481,9 @@ static void draw(uint32_t now)
         if (!vp)
             p = put_str(p, "AS THE PHRASE");
         else
-            for (k = 0; k < n && k < 16u; k++) {   /* its steps, 1 soft .. 9 loud */
-                int lv = ((int)VELO_STEP[VELO[vp].first + k] - 20) * 8 / 115 + 1;
-                *p++ = (char)('0' + (lv < 1 ? 1 : lv > 9 ? 9 : lv));
+            for (k = 0; k < n && k < 16u; k++) {   /* its steps, 1 soft .. 9 loud, - a rest */
+                int st = VELO_STEP[VELO[vp].first + k], lv = (st - 20) * 8 / 115 + 1;
+                *p++ = st ? (char)('0' + (lv < 1 ? 1 : lv > 9 ? 9 : lv)) : '-';
             }
         *p = 0;
         line(L_NOTE, b, TEXT);

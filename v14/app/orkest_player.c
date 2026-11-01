@@ -438,9 +438,10 @@ static FM1_AUDIO_CODE int32_t scale_snap(int32_t n)
 }
 #define ORK_VELO_STEPS
 #include "orkest_velo.inc"
-_Static_assert(sizeof VELO_STEP == 132, "velocity patterns: VELO's offsets");
+_Static_assert(sizeof VELO_STEP == 185, "velocity patterns: VELO's offsets");
 static uint32_t velo_rng = 0x2545F491u;
-/* the velocity of the phrase's next note: the key's, shaped by the phrase or the part's pattern (its next step) */
+/* the velocity of the phrase's next note: the key's, shaped by the phrase or the part's pattern (its next step);
+ * 0: the pattern rests there (no note) */
 static FM1_AUDIO_CODE uint32_t phrase_vel(uint32_t key_vel, uint32_t own, const struct ork_part *pt, uint16_t *step)
 {
     uint32_t pat = pt->velo < ORK_NVELO ? pt->velo : 0u;
@@ -448,6 +449,8 @@ static FM1_AUDIO_CODE uint32_t phrase_vel(uint32_t key_vel, uint32_t own, const 
     if (pat) {
         v = VELO_STEP[VELO[pat].first + *step % VELO[pat].n];
         *step = (uint16_t)((*step + 1u) % (VELO[pat].n * 16u));   /* (a multiple of every length: no jump) */
+        if (!v)
+            return 0;
     }
     v = 100 + (v - 100) * (int32_t)(pt->depth > 100u ? 100u : pt->depth) / 100;
     if (pt->human) {                             /* humanize: +- up to 30 */
@@ -578,11 +581,15 @@ static FM1_AUDIO_CODE void phrases(void)
                 uint32_t gate = pt->gate < 10u ? 10u : pt->gate > 100u ? 100u : pt->gate;
                 if (n < 0 || n > 127)
                     continue;
+                {
+                    uint32_t vel = phrase_vel(r->vel, e->vel, pt, &r->vstep);
+                    if (!vel)
+                        continue;                /* the velocity pattern rests: no note (the last one plays on) */
                 run_quiet(r);                    /* one note at a time */
                 {   /* a slide: over half the note (in blocks at this tempo), at least ~12 ms */
                     uint32_t gl = e->slide && r->prev >= 0 && inc ? ((uint32_t)e->len << 15) / inc : 0u;
-                    note_on_p(r->patch, (uint32_t)n, phrase_vel(r->vel, e->vel, pt, &r->vstep), i + 1u,
-                              e->slide ? r->prev : -1, gl < 4u && gl ? 4u : gl);
+                    note_on_p(r->patch, (uint32_t)n, vel, i + 1u, e->slide ? r->prev : -1, gl < 4u && gl ? 4u : gl);
+                }
                 }
                 r->prev = (int16_t)n;
                 r->note[r->nn] = (uint8_t)n;

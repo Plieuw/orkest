@@ -19,6 +19,9 @@
 #define ORK_PHRASE_EVENTS
 #define ORK_PHRASE_NAMES
 #include "orkest_phrases.inc"
+#define ORK_VELO_STEPS
+#define ORK_VELO_NAMES
+#include "orkest_velo.inc"
 /* ARP part 1's fields under their earlier names */
 #define arp_phrase part[0].phrase
 #define arp_speed part[0].speed
@@ -636,10 +639,10 @@ int main(int argc, char **argv)
         ork_set.arp_on = 0;
         render(3000);
         check("ARP off: everything ends", sounding() == 0);
-        {   /* SEQ scale C MAJOR: THREAT from A4 (A Bb) stays on the white keys; off: Bb4 again */
+        {   /* SEQ scale C MAJOR: TRILL HALF from A4 (A Bb) stays on the white keys; off: Bb4 again */
             unsigned b, out = 0, sharp = 0;
             unsigned q;
-            for (q = 0; q < ORK_NPHRASE && strcmp(PHRASE_NAME[q][0], "THREAT"); q++) ;
+            for (q = 0; q < ORK_NPHRASE && strcmp(PHRASE_NAME[q][0], "TRILL HALF"); q++) ;
             ork_set.arp_on = 1; ork_set.arp_mode = 0; ork_set.arp_phrase = (uint8_t)q; ork_set.scale = 1; ork_set.scale_root = 0;
             render(10);
             (void)ork_post(0, 0x90, 69, 100);
@@ -650,7 +653,7 @@ int main(int argc, char **argv)
             (void)ork_post(0, 0x90, 69, 100);
             for (b = 0; b < 1000u * 441u / 1280u; b++) { orkest_render(blk); if (ork_stat.last_note == 70) sharp++; }
             (void)ork_post(0, 0x80, 69, 0); render(2000);
-            check("SEQ C MAJOR: THREAT stays in the scale (no black key)", out == 0);
+            check("SEQ C MAJOR: TRILL HALF stays in the scale (no black key)", out == 0);
             check("... scale off: as written (Bb4 played)", sharp > 0);
         }
         {   /* velocity in the phrases: GALLOP from a key at 100: soft sixteenths, accented eighths */
@@ -685,6 +688,21 @@ int main(int argc, char **argv)
             (void)ork_post(0, 0x80, 60, 0); render(1500);
             for (b = 0; b < 10u; b++) if (b >= nn || got[b] != WANT[b]) ok = 0;
             check("velocity pattern ACCENT 3 over an 8-note phrase: 120 70 70 runs on across the repeat", ok);
+            {   /* a pattern with rests: HALF (110, 0) over the same phrase: every other note left out */
+                unsigned q, ons = 0;
+                for (q = 0; q < ORK_NVELO && strcmp(VELO_NAME[q], "HALF"); q++) ;
+                ork_set.velo_pat = (uint8_t)q;
+                render(10);
+                (void)ork_post(0, 0x90, 60, 100);
+                for (b = 0; b < 1000u * 441u / 1280u; b++) {
+                    unsigned before = ork_stat.last_note;
+                    ork_stat.last_note = 255;
+                    orkest_render(blk);
+                    if (ork_stat.last_note != 255) ons++; else ork_stat.last_note = (uint8_t)before;
+                }
+                (void)ork_post(0, 0x80, 60, 0); render(1500);
+                check("velocity pattern HALF: 0 is a rest, 4 of the phrase's 8 notes in a second", q < ORK_NVELO && ons == 4u);
+            }
             ork_set.velo_pat = 0;
         }
         {   /* mono: a second key takes over (last key priority): one phrase, from the new key */

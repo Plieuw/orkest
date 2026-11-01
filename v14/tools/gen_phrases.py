@@ -21,7 +21,8 @@ from pathlib import Path
 TPQ = 24  # ticks a quarter note (MIDI clock)
 
 # name (<= 13 characters, the big line), what it is from (<= 20), reference note, the line (one voice: monophonic,
-# the film-score cells a few notes, mostly two beats or less; the ornaments and patterns at most six beats)
+# the film-score cells a few notes, mostly two beats or less; all on C, made C natural minor by minorize(), so the two
+# ARP parts always agree on the key and its tonic; the ornaments and patterns at most six beats)
 PHRASES = [
     # film-score cells (original: idioms, no themes), a few notes, mostly two beats or less; the key is the tonic
     ("OSTINATO", "MINOR 16THS", "C4", "C4:16> C4:16_ Eb4:16 C4:16_ G4:16> C4:16_ Eb4:16 C4:16_"),
@@ -33,14 +34,14 @@ PHRASES = [
     ("TENSION", "MINOR RISE", "C4", "C4:16 Eb4:16 G4:16 Ab4:16 G4:16 Eb4:16"),
     ("FANFARE", "HEROIC FIFTH", "C4", "C4:16_ G4:8.> C5:4~>"),
     ("BRASS CALL", "TRIPLET PICKUP", "C4", "G3:8t@80 G3:8t@88 C4:8t@96 G4:4>"),
-    ("WONDER", "LYDIAN", "C5", "C5:16 D5:16 E5:16 F#5:16 G5:8"),
-    ("MAGIC", "LYDIAN FIFTHS", "C4", "C4:16 G4:16 D5:16 F#5:16"),
+    ("WONDER", "RISING", "C5", "C5:16 D5:16 Eb5:16 F5:16 G5:8"),
+    ("MAGIC", "STACKED", "C4", "C4:16 G4:16 C5:16 D5:16 Eb5:8"),
     ("SOARING", "SUS2", "C4", "C4:16 D4:16 G4:16 C5:16 D5:16 G5:16"),
     ("SWOOP", "SLIDE UP A FIFTH", "C4", "C4:8_ G4:4.~>"),
-    ("THREAT", "PHRYGIAN", "C4", "C4:16> Db4:16 C4:16 Db4:16_ C4:8>"),
-    ("DANGER", "TRITONE", "C4", "C4:8> F#4:8> C4:16_ F#4:16_"),
+    ("THREAT", "LOW CREEP", "C4", "C4:16> D4:16 C4:16 D4:16_ Eb4:8>"),
+    ("POWER", "FIFTHS", "C4", "C4:8> G4:8> C4:16_ G4:16_"),
     ("TRANSFORM", "MEDIANT", "C4", "C4:16 E4:16 G4:16 Ab4:16 C5:16 Eb5:16"),
-    ("AWE", "MEDIANT", "C4", "C4:16 E4:16 G4:16 E4:16 Eb4:16 G4:16 Bb4:16 G4:16"),
+    ("AWE", "MINOR SEVENTH", "C4", "C4:16 Eb4:16 G4:16 Bb4:16 G4:16 Eb4:16"),
     ("BRAAM", "LOW HITS", "C4", "C3:8> C3:16_ C3:16_ C3:4>"),
     ("TRAILER", "HIT AND FILL", "C4", "C4:8@127 r:8 C4:16@70 C4:16@85 C4:8@127"),
     ("BUILD", "MINOR RISER", "C4", "C4:32@50 D4:32@58 Eb4:32@66 F4:32@74 G4:32@82 Ab4:32@90 Bb4:32@100 C5:8@124"),
@@ -51,7 +52,7 @@ PHRASES = [
     ("TRIUMPH", "MAJOR", "C4", "G3:16_ C4:16 E4:16 G4:16 C5:4>"),
     ("FALL OFF", "SLIDE DOWN", "C5", "C5:8.> G4:16~_ r:4"),
     ("EMOTION", "MINOR NINTH", "C4", "C4:16 G4:16 D5:16 Eb5:16"),
-    ("UPLIFT", "ADD NINE", "C4", "C4:16 G4:16 D5:16 E5:16"),
+    ("UPLIFT", "SEVENTH NINTH", "C4", "C4:16 G4:16 Bb4:16 D5:16"),
     ("EPIC LINE", "I VI VII I", "C4", "C4:8 Ab4:8 Bb4:8 C5:8>"),
     ("ADVENTURE", "DORIAN", "C4", "C4:16 D4:16 Eb4:16 F4:16 G4:16 A4:16 G4:8"),
     ("CHASE", "TRIPLET DRIVE", "C4", "C4:8t> C4:8t_ Eb4:8t C4:8t> C4:8t_ G4:8t"),
@@ -165,11 +166,23 @@ def phrase(ref, line):
     return [tuple(e) for e in ev], at
 
 
+KEEP_CHROMATIC = {"TRILL HALF", "CHROMATIC"}
+
+
+def minorize(line):
+    """every phrase in C natural minor, so that any two fit together on the same key: E, A, B -> Eb, Ab, Bb"""
+    return re.sub(r"(?<![A-G#b])([EAB])(?![#b])(-?\d)", lambda m: m[1] + "b" + m[2], line)
+
+
 def main(argv):
     out = Path(argv[1] if len(argv) > 1 else Path(__file__).resolve().parent.parent / "app" / "orkest_phrases.inc")
     evs, heads = [], []
     for name, what, ref, line in PHRASES:
         assert len(name) <= 13 and len(what) <= 20, name
+        assert midi(ref) % 12 == 0, name           # (every phrase written on C)
+        if name not in KEEP_CHROMATIC:
+            line = minorize(line)
+            assert not re.search(r"[CDFG]#", line), name
         ev, length = phrase(ref, line)
         assert length <= 6 * TPQ, (name, length)   # six beats at most
         assert all(0 < d <= 255 and -48 <= iv <= 48 for _, d, iv, _v, _s in ev), name
