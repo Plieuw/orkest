@@ -641,19 +641,19 @@ int main(int argc, char **argv)
             check("... LOOP: from its start with each repeat", ok[1]);
             ork_set.velo_pat = 0; ork_set.velo_reset = 0;
         }
-        {   /* poly: two keys held, two phrases at once; one let go (HOLD), the other plays on */
-            unsigned b, both = 0;
+        {   /* mono: a second key takes over (last key priority): one phrase, from the new key */
+            unsigned b, two = 0;
             use(patch_of("FLUTE"));
-            ork_set.arp_on = 1; ork_set.arp_mode = 0; ork_set.arp_phrase = 0; ork_set.arp_gate = 100;
+            ork_set.arp_on = 1; ork_set.arp_mode = 0; ork_set.arp_phrase = 0; ork_set.arp_gate = 50; ork_set.release = 0;
+            ork_set.tail = 0;                        /* (no release samples: the voices counted are the notes) */
             render(10);
-            (void)ork_post(0, 0x90, 60, 100); (void)ork_post(0, 0x90, 67, 100);
-            for (b = 0; b < 600u * 441u / 1280u; b++) { orkest_render(blk); if (ork_stat.voices >= 2u) both++; }
-            check("ARP poly: two keys, two phrases sounding together", both > 100u);
-            (void)ork_post(0, 0x80, 60, 0); render(500);
-            check("... the first let go: the second plays on", sounding() > 0);
-            (void)ork_post(0, 0x80, 67, 0); render(1500);
-            check("... both let go: silence", sounding() == 0);
-            ork_set.arp_gate = 90;
+            (void)ork_post(0, 0x90, 60, 100); render(200); (void)ork_post(0, 0x90, 67, 100);
+            for (b = 0; b < 600u * 441u / 1280u; b++) { orkest_render(blk); if (ork_stat.voices >= 2u) two++; }
+            printf("  mono: blocks with 2+ voices %u, last note %u\n", two, ork_stat.last_note);
+            check("ARP mono: a second key takes over, one phrase sounding", two < 20u && ork_stat.last_note >= 67);
+            (void)ork_post(0, 0x80, 67, 0); (void)ork_post(0, 0x80, 60, 0); render(1500);
+            check("... let go: silence", sounding() == 0);
+            ork_set.arp_gate = 90; ork_set.tail = 64;
             use(patch_of("HARP"));
         }
         {   /* SEQ PARTS (as the player starts): CELLI ALBERTI an octave down, VIOLINS ARP UP DOWN, FLUTE TRILL up */
@@ -672,6 +672,16 @@ int main(int argc, char **argv)
             check("PARTS on, one key: three parts sounding at once", most >= 3u);
             (void)ork_post(0, 0x80, 60, 0); render(3000);
             check("... let go (HOLD): all three end", sounding() == 0);
+            ork_set.part_mask = 5;                   /* parts 1 and 3 only */
+            ork_set.tail = 0; ork_set.release = 0; ork_set.arp_gate = 50;
+            render(10);
+            most = 0;
+            (void)ork_post(0, 0x90, 60, 100);
+            for (b = 0; b < 800u * 441u / 1280u; b++) { orkest_render(blk); if (ork_stat.voices > most) most = ork_stat.voices; }
+            (void)ork_post(0, 0x80, 60, 0); render(3000);
+            printf("  parts 1 and 3: at most %u voices\n", most);
+            check("... parts 1 and 3 chosen: two sounding", most >= 2u && most < 6u);
+            ork_set.part_mask = 15; ork_set.tail = 64; ork_set.arp_gate = 90;
             ork_set.parts_on = 0;
             render(10);
         }

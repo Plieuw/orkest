@@ -163,7 +163,8 @@ static void knob_row(unsigned l, const char *label, const char *value, uint16_t 
 }
 
 /* --------------------------------------------------------- settings --- */
-#define SET_MAGIC 0x3753524FU    /* "ORS7" (earlier records: what they hold, the rest the defaults) */
+#define SET_MAGIC 0x3853524FU    /* "ORS8" (earlier records: what they hold, the rest the defaults) */
+#define SET_MAGIC_7 0x3753524FU  /* "ORS7": up to the part mask, its check where part_mask is */
 #define SET_MAGIC_6 0x3653524FU  /* "ORS6": up to the parts, its check where part_patch is */
 #define SET_MAGIC_5 0x3553524FU  /* "ORS5": up to the velocity fields, its check where velo_depth is */
 #define SET_MAGIC_4 0x3453524FU  /* "ORS4": up to the ARP fields, its check where they start */
@@ -179,6 +180,7 @@ struct settings {
     uint8_t velo_pat, velo_depth, velo_human, velo_reset, parts_on;   /* parts_on: 0 in ORS6 (its pad) */
     uint8_t part_patch[4], part_phrase[4], part_velo[4];
     int8_t part_oct[4];
+    uint8_t part_mask, pad[3];
     uint32_t check;
 };
 /* the LFO's note values in TEMPO: MIDI clock ticks a cycle (24 a quarter note) */
@@ -225,6 +227,7 @@ static void settings_load(void)
         return;
     {   /* each record its check after what it holds */
         uint32_t at = s.magic == SET_MAGIC ? offsetof(struct settings, check)
+            : s.magic == SET_MAGIC_7 ? offsetof(struct settings, part_mask)
             : s.magic == SET_MAGIC_6 ? offsetof(struct settings, part_patch)
             : s.magic == SET_MAGIC_5 ? offsetof(struct settings, velo_depth)
             : s.magic == SET_MAGIC_4 || s.magic == SET_MAGIC_3 ? offsetof(struct settings, arp_on) : 0u;
@@ -234,7 +237,9 @@ static void settings_load(void)
         if (old != set_check(&s, at))
             return;
     }
-    if (s.magic != SET_MAGIC) {                     /* from before the parts: as the player starts */
+    if (s.magic != SET_MAGIC)                       /* from before the part mask: every part */
+        s.part_mask = 15;
+    if (s.magic != SET_MAGIC && s.magic != SET_MAGIC_7) {   /* from before the parts: as the player starts */
         unsigned k;
         s.parts_on = 0;
         for (k = 0; k < 4u; k++) {
@@ -244,11 +249,11 @@ static void settings_load(void)
             s.part_oct[k] = ork_set.part_oct[k];
         }
     }
-    if (s.magic != SET_MAGIC && s.magic != SET_MAGIC_6) {   /* from before the velocity patterns */
+    if (s.magic != SET_MAGIC && s.magic != SET_MAGIC_7 && s.magic != SET_MAGIC_6) {   /* from before the velocity patterns */
         s.velo_pat = s.velo_human = s.velo_reset = 0;
         s.velo_depth = 100;
     }
-    if (s.magic != SET_MAGIC && s.magic != SET_MAGIC_5)   /* from before the scale */
+    if (s.magic != SET_MAGIC && s.magic != SET_MAGIC_7 && s.magic != SET_MAGIC_6 && s.magic != SET_MAGIC_5)   /* from before the scale */
         s.scale = s.scale_root = 0;
     if (s.magic == SET_MAGIC_3)                     /* from before the ENV menu: the parts as recorded */
         s.transient = s.tail = 64;
@@ -269,6 +274,7 @@ static void settings_load(void)
     ork_set.velo_human = s.velo_human <= 100u ? s.velo_human : 0u;
     ork_set.velo_reset = s.velo_reset & 1u;
     ork_set.parts_on = s.parts_on & 1u;
+    ork_set.part_mask = s.part_mask & 15u;
     {
         unsigned k;
         for (k = 0; k < 4u; k++) {
@@ -326,6 +332,7 @@ static int settings_save(void)
     s.velo_human = ork_set.velo_human;
     s.velo_reset = ork_set.velo_reset;
     s.parts_on = ork_set.parts_on;
+    s.part_mask = ork_set.part_mask;
     {
         unsigned k;
         for (k = 0; k < 4u; k++) {
@@ -438,7 +445,8 @@ static const char *arp_hint(void)   /* on / off, the tempo the phrases follow, t
     p = put_str(p, ork_stat.clock ? "MIDI " : "");
     p = put_int(p, (int)((t10 + 5u) / 10u));
     p = put_str(p, ork_stat.clock ? "" : " BPM");
-    put_str(p, arp_menu == 2u ? "  SELECT ON OFF  ARP BACK" : "  SELECT ON OFF  ARP VELO");
+    put_str(p, arp_menu == 3u ? "  SELECT PARTS  ARP BACK" : arp_menu == 2u ? "  SELECT ON OFF  ARP PARTS"
+               : "  SELECT ON OFF  ARP VELO");
     return b;
 }
 static void draw(uint32_t now)
@@ -494,6 +502,25 @@ static void draw(uint32_t now)
         p = put_int(p, (int)(d % 10u));
         put_str(p, " S");
         knob_row(L_K4, "K4 DELAY", v, TEXT);
+    } else if (arp_menu == 3u) {                    /* the ARP menu's third page: which parts play */
+        static const uint8_t ROW[4] = {L_K1, L_K2, L_K3, L_K4};
+        unsigned k;
+        line(L_SOUND, ork_set.parts_on ? "PARTS ON" : "PARTS OFF", ork_set.parts_on ? ACCENT : DIM);
+        p = b;
+        for (k = 0; k < 4u; k++) {                  /* the combination: 1 2 - 4 */
+            if (k)
+                *p++ = ' ';
+            *p++ = (ork_set.part_mask >> k & 1u) && ork_set.part_patch[k] ? (char)('1' + k) : '-';
+        }
+        *p = 0;
+        line(L_NOTE, ork_set.parts_on ? b : "ARP PLAYS ITS PHRASE", ork_set.parts_on ? TEXT : DIM);
+        for (k = 0; k < 4u; k++) {
+            unsigned pp = ork_set.part_patch[k], on = ork_set.part_mask >> k & 1u;
+            p = put_int(v, (int)k + 1);
+            p = put_str(p, " ");
+            put_str(p, !pp ? "NO SOUND" : pp <= ork_bank.np ? ork_bank.patch[pp - 1u].name : "?");
+            knob_row(ROW[k], v, on ? "ON" : "OFF", on && pp ? TEXT : DIM);
+        }
     } else if (arp_menu == 2u) {                    /* the ARP menu's second page: velocity, apart from the phrase */
         unsigned vp = ork_set.velo_pat % ORK_NVELO, k, n = VELO[vp].n;
         line(L_SOUND, "VELOCITY", ork_set.arp_on ? ACCENT : DIM);
@@ -696,7 +723,7 @@ void groove_screen_control(void)
                  (k == B_HOME && (lfo_menu || env_menu || arp_menu || scale_menu))) {
             lfo_menu = k == B_LFO ? !lfo_menu : 0;
             env_menu = k == B_ENV ? !env_menu : 0;
-            arp_menu = k == B_ARP ? (uint8_t)((arp_menu + 1u) % 3u) : 0;   /* ARP: the phrase, its velocity, closed */
+            arp_menu = k == B_ARP ? (uint8_t)((arp_menu + 1u) % 4u) : 0;   /* ARP: phrase, velocity, parts, closed */
             if (k == B_ARP && arp_menu == 1u)
                 ork_set.arp_on = 1;                 /* opening the ARP menu turns ARP on (SELECT turns it off) */
             scale_menu = k == B_SCL ? (scale_menu == 1u ? 0u : 1u)       /* SCL: the scale */
@@ -734,6 +761,13 @@ void groove_screen_control(void)
                 *t[k] = (uint8_t)(v < 0 ? 0 : v > 127 ? 127 : v);
             }
         lfo_apply();
+    } else if (arp_menu == 3u) {                    /* parts: SELECT PARTS on/off, K1..K4 each part on/off */
+        int e[4] = {c.encoders[E_K1], c.encoders[E_K2], c.encoders[E_K3], c.encoders[E_K4]};
+        if (c.encoders[E_SELECT])
+            ork_set.parts_on = c.encoders[E_SELECT] > 0;
+        for (k = 0; k < 4u; k++)
+            if (e[k])
+                ork_set.part_mask = (uint8_t)(e[k] > 0 ? ork_set.part_mask | 1u << k : ork_set.part_mask & ~(1u << k));
     } else if (arp_menu == 2u) {
         int v;
         if (c.encoders[E_SELECT])                   /* SELECT: on / off, as on the first page */

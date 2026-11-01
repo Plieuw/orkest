@@ -66,7 +66,7 @@ static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
 struct ork_settings ork_set = {0, 8, 6, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64, 0, 0, 1, 90, 0, 0, 0, 0, 100, 0, 0,
-                               0, {4, 2, 13, 0}, {48, 51, 39, 0}, {4, 17, 0, 0}, {-1, 0, 1, 0}, 9131};
+                               0, {4, 2, 13, 0}, {48, 51, 39, 0}, {4, 17, 0, 0}, {-1, 0, 1, 0}, 15, 9131};
 struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0};
 
 /* ------------------------------------------------------------ events --- */
@@ -365,8 +365,8 @@ static FM1_AUDIO_CODE void clock_tick(void)
     clk_age = 0;
 }
 /* ------------------------------------------------------------ phrases --- */
-/* ARP: each key held plays the chosen phrase from its note, up to NRUN keys at once (a chord: the phrase in parallel
- * from each of its notes); each phrase is one line, one note at a time. Positions in MIDI clock ticks, Q16; a phrase's notes start on the block they fall in
+/* ARP: monophonic, last key priority: the newest key plays the chosen phrase from its note (or, with PARTS, each part
+ * chosen in the ARP menu its own phrase); each phrase is one line, one note at a time. Positions in MIDI clock ticks, Q16; a phrase's notes start on the block they fall in
  * (<= 2.9 ms late). */
 #define ORK_PHRASE_EVENTS
 #include "orkest_phrases.inc"
@@ -406,7 +406,7 @@ static FM1_AUDIO_CODE uint32_t phrase_vel(uint32_t key_vel, uint32_t own, uint32
     v = (int32_t)key_vel * v / 100;
     return v < 1 ? 1u : v > 127 ? 127u : (uint32_t)v;
 }
-#define NRUN 16                                  /* 4 keys, each up to 4 parts */
+#define NRUN 4                                   /* one key: ARP's own phrase, or up to 4 parts */
 #define RUN_NOTES 1
 typedef struct {
     uint8_t key, vel, on, stop;                  /* stop: let go (HOLD), it ends; ONCE: it ends at its end */
@@ -435,27 +435,10 @@ static FM1_AUDIO_CODE void run_end(run_t *r)
     r->on = 0;
 }
 static uint32_t run_clock;
-/* fresh: no other key is held (LATCH: a new chord replaces what was latched); part: 255 ARP's own, else a SEQ part */
-static FM1_AUDIO_CODE void run_start(uint32_t key, uint32_t vel, int fresh, uint32_t part)
+/* part: 255 ARP's own phrase (its runner 0), else the SEQ part (runner = part) */
+static FM1_AUDIO_CODE void run_start(uint32_t key, uint32_t vel, uint32_t part)
 {
-    run_t *r = 0;
-    uint32_t i;
-    if (fresh && ork_set.arp_mode == 2u)
-        for (i = 0; i < NRUN; i++)
-            if (run[i].on)
-                run_end(&run[i]);
-    for (i = 0; i < NRUN && !r; i++)             /* the same key (and part) again, else a free one */
-        if (run[i].on && run[i].key == key && run[i].part == part)
-            r = &run[i];
-    for (i = 0; i < NRUN && !r; i++)
-        if (!run[i].on)
-            r = &run[i];
-    if (!r) {                                    /* all busy: the oldest gives way */
-        r = &run[0];
-        for (i = 1; i < NRUN; i++)
-            if (run[i].age < r->age)
-                r = &run[i];
-    }
+    run_t *r = &run[part < 4u ? part : 0u];
     run_quiet(r);
     r->age = ++run_clock;
     r->key = (uint8_t)key;
@@ -478,19 +461,20 @@ static FM1_AUDIO_CODE void run_start(uint32_t key, uint32_t vel, int fresh, uint
         r->shift = 0;
     }
 }
-/* a key: ARP's phrase, or each SEQ part that has a sound */
-static FM1_AUDIO_CODE void runs_start(uint32_t key, uint32_t vel, int fresh)
+/* a key (the newest wins: what played ends): ARP's phrase, or each part chosen that has a sound */
+static FM1_AUDIO_CODE void runs_start(uint32_t key, uint32_t vel)
 {
     uint32_t p;
+    for (p = 0; p < NRUN; p++)
+        if (run[p].on)
+            run_end(&run[p]);
     if (!ork_set.parts_on) {
-        run_start(key, vel, fresh, 255u);
+        run_start(key, vel, 255u);
         return;
     }
     for (p = 0; p < 4u; p++)
-        if (ork_set.part_patch[p] && ork_set.part_patch[p] <= ork_bank.np) {
-            run_start(key, vel, fresh, p);
-            fresh = 0;
-        }
+        if ((ork_set.part_mask >> p & 1u) && ork_set.part_patch[p] && ork_set.part_patch[p] <= ork_bank.np)
+            run_start(key, vel, p);
 }
 static FM1_AUDIO_CODE void run_release(uint32_t key)   /* its key let go: HOLD stops, ONCE and LATCH play on */
 {
@@ -611,15 +595,10 @@ static FM1_AUDIO_CODE void events(void)
             d1 = (e >> 8) & 0x7Fu;
             d2 = (e >> 16) & 0x7Fu;
             if (st == 0x90u && d2) {
-                int fresh = 1;
-                if (ork_set.arp_on)                 /* (no other key held: a fresh chord) */
-                    for (st = 0; st < 128u && fresh; st++)
-                        if (held[st] && st != d1)
-                            fresh = 0;
                 if (held[d1] < 255u)
                     held[d1]++;
                 if (ork_set.arp_on)                 /* ARP: the key plays its phrase */
-                    runs_start(d1, d2, fresh);
+                    runs_start(d1, d2);
                 else
                     note_on(d1, d2);
             } else if (st == 0x80u || st == 0x90u) {

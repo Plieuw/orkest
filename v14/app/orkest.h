@@ -117,6 +117,7 @@ struct ork_settings {
     volatile uint8_t parts_on;
     volatile uint8_t part_patch[4], part_phrase[4], part_velo[4];
     volatile int8_t part_oct[4];
+    volatile uint8_t part_mask;                         /* which parts play (bit p: part p), set in the ARP menu */
     volatile uint32_t arp_inc;
 };
 /* a phrase's note: start (ticks, 24 a quarter note), length (ticks), interval from the key (semitones), velocity */
