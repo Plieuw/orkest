@@ -281,12 +281,33 @@ static int settings_save(void)
         return -1;
     return fm1_flash_write(set_offset(), &s, sizeof s) == FM1_FLASH_OK ? 0 : -1;
 }
+/* the scale and its root are kept without SAVE: written into the stored record (the rest of it as it was saved), or
+ * a whole record of the current settings when there is none yet */
+static int scale_store(void)
+{
+    struct settings s;
+    if (!fm1_flash_size())
+        return -1;
+    if (fm1_flash_read(set_offset(), &s, sizeof s) != FM1_FLASH_OK || s.magic != SET_MAGIC ||
+        s.check != set_check(&s, offsetof(struct settings, check)))
+        return settings_save();
+    if (s.scale == ork_set.scale && s.scale_root == ork_set.scale_root)
+        return 0;
+    s.scale = ork_set.scale;
+    s.scale_root = ork_set.scale_root;
+    s.check = set_check(&s, offsetof(struct settings, check));
+    if (fm1_flash_erase(set_offset()) != FM1_FLASH_OK)
+        return -1;
+    return fm1_flash_write(set_offset(), &s, sizeof s) == FM1_FLASH_OK ? 0 : -1;
+}
 
 /* ------------------------------------------------------------ state --- */
 static uint32_t prev_keys, blocked_keys, prev_buttons, led_shown, event_until, splash_until, frame_ms;
 static uint8_t lfo_menu;           /* the LFO menu is open: the knobs set the LFO */
 static uint8_t arp_menu;           /* the ARP menu is open: the knobs choose and shape the phrase */
 static uint8_t scale_menu;         /* the SEQ menu is open: the knobs choose the ARP's scale */
+static uint8_t scale_dirty;        /* changed, not yet stored: when the menu closes, or 5 s after the last turn */
+static uint32_t scale_turned;
 static uint8_t env_menu;           /* the ENV menu is open: the knobs set the envelope and the parts' levels */
 static uint8_t key_note[KEYS];
 static char event[40];
@@ -570,6 +591,10 @@ void groove_screen_control(void)
             env_menu = k == B_ENV ? !env_menu : 0;
             arp_menu = k == B_ARP ? !arp_menu : 0;
             scale_menu = k == B_SEQ ? !scale_menu : 0;
+            if (!scale_menu && scale_dirty) {
+                scale_dirty = 0;
+                (void)scale_store();
+            }
             force_draw = 1;
         }
         else {
@@ -626,6 +651,10 @@ void groove_screen_control(void)
         }
     } else if (scale_menu) {
         int v;
+        if (c.encoders[E_K1] || c.encoders[E_K2] || c.encoders[E_PRESETS]) {
+            scale_dirty = 1;
+            scale_turned = now;
+        }
         if (c.encoders[E_K1]) {                     /* K1: the root, round the octave */
             v = ((int)ork_set.scale_root + c.encoders[E_K1]) % 12;
             ork_set.scale_root = (uint8_t)(v < 0 ? v + 12 : v);
@@ -654,6 +683,10 @@ void groove_screen_control(void)
     }
     if (!lfo_menu && !env_menu && !arp_menu && !scale_menu && (c.encoders[E_SELECT] || c.encoders[E_ALGO]))
         say(c.encoders[E_SELECT] ? "SELECT" : "ALGORITHM", now);
+    if (scale_dirty && now - scale_turned >= 5000u) {   /* the scale kept, also with the menu left open */
+        scale_dirty = 0;
+        (void)scale_store();
+    }
     /* MASTER: 0..1023 -> 0..127, with a little hysteresis against ADC noise */
     if (c.knob <= 1023u && (master_adc > 1023u || c.knob + 4u < master_adc || c.knob > master_adc + 4u)) {
         master_adc = c.knob;
