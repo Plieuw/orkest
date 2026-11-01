@@ -69,14 +69,17 @@ static int32_t blk[2 * FM1_BLOCK_FRAMES];
 static int32_t peak;
 static FILE *wav;
 static uint32_t wav_frames;
+static double energy;                    /* the sum of squares over the last render() */
 static void render(uint32_t ms)
 {
+    energy = 0;
     uint32_t b = ms * FM1_SAMPLE_RATE / 1000u / FM1_BLOCK_FRAMES + 1u, i;
     while (b--) {
         orkest_render(blk);
         for (i = 0; i < 2u * FM1_BLOCK_FRAMES; i++) {
             int32_t a = blk[i] < 0 ? -blk[i] : blk[i];
             if (a > peak) peak = a;
+            energy += (double)blk[i] * blk[i];
         }
         if (wav) {
             for (i = 0; i < 2u * FM1_BLOCK_FRAMES; i++) {
@@ -174,17 +177,28 @@ int main(int argc, char **argv)
     check("... cut short: not used", ork_bank_bind(image, sizeof image - 100) == ORK_BANK_BAD);
     check("... not a bank: none", ork_bank_bind(flash, 4096) == ORK_BANK_NONE);
 
-    /* ---- the decoder: every zone as the generator decodes it (a loop: one more pass, from its stored state) */
+    /* ---- the decoder: every wave as the generator decodes it (a sustain: from its loop start, one pass more) */
     ork_bank_bind(image, sizeof image);
     {
         int same = 1;
+        extern long long ork_test_decode(unsigned zone, unsigned which, unsigned samples);
         for (i = 0; i < ork_bank.nz; i++) {
             const ork_zone_t *z = &ork_bank.zone[i];
-            extern long long ork_test_decode(unsigned zone, unsigned samples);
-            long long sum = ork_test_decode(i, z->n + (z->looped ? z->le - z->ls : 0u));
-            if (sum != ORK_BANK_CHECK[i]) { printf("  zone %u: %lld, the generator's %lld\n", i, sum, ORK_BANK_CHECK[i]); same = 0; }
+            long long t = z->t_n ? ork_test_decode(i, 0, z->t_n) : 0;
+            long long l = z->l_n ? ork_test_decode(i, 1, 2u * (z->l_n - z->l_ls)) : 0;
+            if (t != ORK_BANK_CHECK[2u * i] || l != ORK_BANK_CHECK[2u * i + 1u]) {
+                printf("  zone %u: %lld %lld, the generator's %lld %lld\n", i, t, l, ORK_BANK_CHECK[2u * i], ORK_BANK_CHECK[2u * i + 1u]);
+                same = 0;
+            }
         }
-        check("decoder: every zone decodes as the generator's (loops too)", same);
+        check("decoder: every transient and sustain decodes as the generator's (loops too)", same);
+        same = 1;
+        for (i = 0; i < ork_bank.ni; i++) {
+            const ork_inst_t *in = &ork_bank.inst[i];
+            long long r = in->has_rel ? ork_test_decode(i, 2, in->rel_n) : 0;
+            if (r != ORK_BANK_RCHECK[i]) { printf("  release %u: %lld, the generator's %lld\n", i, r, ORK_BANK_RCHECK[i]); same = 0; }
+        }
+        check("... every release too", same);
     }
 
     /* ---- the upload, as the installer sends it */
@@ -234,7 +248,7 @@ int main(int argc, char **argv)
         b[0] = 0x10;
         r = send(b, 1, &rn);
         check("INFO: the bank's size and name", r && r[1] == ORK_BANK_OK && get7(r + 2, 5) == sizeof ORK_BANK_FILE &&
-              !memcmp(r + 12, "ORKEST 1", 8));
+              !memcmp(r + 12, "ORKEST 2", 8));
     }
 
     /* ---- the player */
@@ -300,6 +314,36 @@ int main(int argc, char **argv)
     note(0xB0, 123, 0);
     render(4000);
     check("... all released", sounding() == 0);
+
+    /* ---- the three parts: transient, sustain, release */
+    {
+        double e64, e127, e0, early0, t64, t0;
+        unsigned m = (unsigned)patch_of("MARCATO"), si;
+        const ork_layer_t *ly = &ork_bank.patch[m].l[0];
+        use(patch_of("VIOLINS"));
+        ork_set.attack = 0;
+        note(0x90, 62, 100); render(3); early0 = energy; render(150); e64 = energy; note(0x80, 62, 0); render(3000);
+        ork_set.transient = 127;
+        note(0x90, 62, 100); render(3); render(150); e127 = energy; note(0x80, 62, 0); render(3000);
+        ork_set.transient = 0;
+        note(0x90, 62, 100); render(3); t0 = energy; render(150); e0 = energy; note(0x80, 62, 0); render(3000);
+        ork_set.transient = 64;
+        printf("  VIOLINS first 150 ms (dB vs 64): transient 127 %+.1f, 0 %+.1f\n", 10 * log10(e127 / e64), 10 * log10(e0 / e64));
+        check("TRANSIENT 127: a stronger start than 64", e127 > e64 * 1.1);
+        check("TRANSIENT 0: the sustain alone, from the first sample", t0 > 0 && e0 != e64 && early0 > 0);
+        note(0x90, 62, 100); render(800); note(0x80, 62, 0); render(100); render(500); t64 = energy; render(3000);
+        ork_set.tail = 0;
+        note(0x90, 62, 100); render(800); note(0x80, 62, 0); render(100); render(500); t0 = energy; render(3000);
+        ork_set.tail = 64;
+        printf("  VIOLINS 0.1 .. 0.6 s after note off (dB): tail 64 over tail 0 %+.1f\n", 10 * log10(t64 / (t0 + 1)));
+        check("TAIL 64: the recorded release after note off, over TAIL 0", t64 > t0 * 1.5);
+        for (si = 0; si < ork_bank.ni && strcmp(ork_bank.inst[si].name, "SPICCATO"); si++) ;
+        check("MARCATO: the violins' sustain with the spiccato's transient", si < ork_bank.ni && ly->tinst == si &&
+              !strcmp(ork_bank.inst[ly->inst].name, "VIOLINS"));
+        note(0x90, 62, 100); render(500);
+        check("... it sounds and holds", sounding() == 1);
+        note(0x80, 62, 0); render(3000);
+    }
     ork_set.reverb = 100;
     use(patch_of("VIOLINS"));
     note(0x90, 60, 127);

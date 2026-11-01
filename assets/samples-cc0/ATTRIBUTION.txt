@@ -1,5 +1,5 @@
 Orkest - sample sources
-Retrieved: 2026-11-01 (the first seconds of each file, mono, resampled)
+Retrieved: 2026-11-01 (the first seconds of each file, or for release/ its end; mono, resampled)
 Licence: CC0 1.0 Universal (public domain dedication)
   https://creativecommons.org/publicdomain/zero/1.0/
 Source: Versilian Studios (Sam Gossner), VSCO-2 Community Edition
@@ -65,3 +65,17 @@ TIMPANI/02_Timpani5_Hit_v3_rr1_Sum.wav  <-  sgossner/VSCO-2-CE: Percussion/Timpa
 GLOCKENSPIEL/00_glock_medium_G4.wav  <-  sgossner/VSCO-2-CE: Percussion/Glock/glock_medium_G4.wav
 GLOCKENSPIEL/01_glock_medium_G5.wav  <-  sgossner/VSCO-2-CE: Percussion/Glock/glock_medium_G5.wav
 GLOCKENSPIEL/02_glock_medium_G6.wav  <-  sgossner/VSCO-2-CE: Percussion/Glock/glock_medium_G6.wav
+VIOLINS/release/VlnEns_susVib_C4_v2.wav  <-  sgossner/VSCO-2-CE: Strings/Violin Section/susVib/VlnEns_susVib_C4_v2.wav (its end)
+VIOLAS/release/ViolaEns_susvib_D3_v2_1.wav  <-  sgossner/VSCO-2-CE: Strings/Viola Section/susvib/ViolaEns_susvib_D3_v2_1.wav (its end)
+CELLI/release/susvib_D2_v3_1.wav  <-  sgossner/VSCO-2-CE: Strings/Cello Section/susvib/susvib_D2_v3_1.wav (its end)
+BASSES/release/BKCtbss_SusNV_A1_v3_rr1.wav  <-  sgossner/VSCO-2-CE: Strings/Solo Contrabass/SusNV/BKCtbss_SusNV_A1_v3_rr1.wav (its end)
+SOLO_VIOLIN/release/LLVln_ArcoVib_C5_f.wav  <-  sgossner/VSCO-2-CE: Strings/Solo Violin/Arco Vib/LLVln_ArcoVib_C5_f.wav (its end)
+TREMOLO/release/VlnEns_Trem_C4_v2.wav  <-  sgossner/VSCO-2-CE: Strings/Violin Section/Trem/VlnEns_Trem_C4_v2.wav (its end)
+FLUTE/release/LDFlute_susNV_A3_v3_1.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Flute/susNV/LDFlute_susNV_A3_v3_1.wav (its end)
+OBOE/release/Oboe_Sus_A#3_v3_Main.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Oboe/Sus/Oboe_Sus_A#3_v3_Main.wav (its end)
+CLARINET/release/DCClar_susLong_D3_v2_rr1_sum.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Clarinet/susLong/DCClar_susLong_D3_v2_rr1_sum.wav (its end)
+BASSOON/release/PSBassoon_G2_v2_1.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Bassoon/sus/PSBassoon_G2_v2_1.wav (its end)
+HORN/release/MOHorn_sus_F2_v2_1.wav  <-  sgossner/VSCO-2-CE: Brass/F Horn/sus/MOHorn_sus_F2_v2_1.wav (its end)
+TRUMPET/release/Sum_SHTrumpet_sus_D#3_v3_rr1.wav  <-  sgossner/VSCO-2-CE: Brass/Trumpet/sus/Sum_SHTrumpet_sus_D#3_v3_rr1.wav (its end)
+TROMBONE/release/tenortbn_sus_D2_v2_1.wav  <-  sgossner/VSCO-2-CE: Brass/Tenor Trombone/sus/tenortbn_sus_D2_v2_1.wav (its end)
+TUBA/release/Tuba3_sus_F1_v2_rr1_Mid.wav  <-  sgossner/VSCO-2-CE: Brass/Tuba/sus/Tuba3_sus_F1_v2_rr1_Mid.wav (its end)

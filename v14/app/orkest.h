@@ -14,31 +14,40 @@
 #include "fm1.h"
 
 /* ------------------------------------------------------------ the bank --- */
+/* bank format 2 (v14/tools/gen_bank.py): every note in three parts, played as independent streams: the
+ * TRANSIENT (once), the SUSTAIN (a loop, swelling in over [w_t0, w_t1) source samples), and the instrument's RELEASE
+ * (from note off) */
 typedef struct {
-    uint32_t off, n, ls, le;     /* data offset (bytes), samples, loop [ls, le) */
+    uint32_t t_off, t_n;         /* transient: data offset (bytes), samples */
+    uint32_t l_off, l_n, l_ls;   /* sustain: data offset, samples (a short preroll, then the loop), loop start */
+    int16_t l_pred;              /* the sustain's ADPCM state at its loop start (where it starts too) */
+    uint8_t l_idx, lo, hi, flags;   /* keys lo..hi; flags bit 0: has a sustain */
+    uint8_t pad[2];
     uint32_t rate;               /* the zone's sample rate / 44100, Q16 */
     int16_t root16;              /* root pitch, 1/16 semitone */
-    int16_t pred;                /* ADPCM state at ls */
-    uint8_t idx, lo, hi, looped;
+    uint16_t w_t0;               /* the sustain's swell: 0 before w_t0, 1 from w_t1 (source samples) */
+    uint32_t w_t1;
 } ork_zone_t;
 typedef struct {
     char name[14];
-    uint8_t z0, nz, one, pad;    /* zones; one = one-shot (ignores note off) */
-    uint16_t gain;               /* Q8 */
+    uint8_t z0, nz, one, has_rel;   /* zones; one = one-shot (ignores note off); has a release */
+    uint16_t gain, rel_gain;     /* Q8 */
+    int16_t rel_root16;
+    uint32_t rel_off, rel_n, rel_rate;
 } ork_inst_t;
 typedef struct {
     uint8_t inst, lo, hi;        /* instrument; the keys it plays */
     int8_t tr;                   /* transposition, semitones */
     uint16_t gain;               /* Q8 */
     int8_t pan;                  /* -64 left .. +63 right */
-    uint8_t pad;
+    uint8_t tinst;               /* the instrument whose transients it plays (255: its own) */
 } ork_layer_t;
 typedef struct {
     char name[14];
     uint8_t attack, release, nl, pad[3];
     ork_layer_t l[3];
 } ork_patch_t;
-_Static_assert(sizeof(ork_zone_t) == 28 && sizeof(ork_inst_t) == 20 && sizeof(ork_patch_t) == 44, "bank layout");
+_Static_assert(sizeof(ork_zone_t) == 40 && sizeof(ork_inst_t) == 36 && sizeof(ork_patch_t) == 44, "bank layout");
 
 struct ork_bank_header {
     uint32_t magic;              /* ORK_MAGIC */
@@ -88,6 +97,9 @@ struct ork_settings {
      * note); MIDI clock in sets the tempo while it runs, else lfo_inc carries the internal tempo (control task) */
     volatile uint8_t lfo_sync;
     volatile uint16_t lfo_ticks;
+    /* the parts' levels: transient (0..127, 64 = as recorded; below, the sustain also takes over the start: 0 = the
+     * sustain alone from the first sample), tail = the release sample (0 = none, 64 = as recorded) */
+    volatile uint8_t transient, tail;
 };
 extern struct ork_settings ork_set;
 /* What the player reports (written by the audio ISR). */

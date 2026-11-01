@@ -2,7 +2,7 @@
 /* Orkest's sound bank in the FM1's user flash (control task).
  *
  * The bank starts at offset 0 of the user partition (fm1_flash_*: the SDK finds the partition); the last sector
- * holds the settings (orkest_ui.c). Its layout: v14/tools/gen_bank.py. A bank is used only when its header is
+ * holds the settings (orkest_ui.c). Its layout (format 2): v14/tools/gen_bank.py. A bank is used only when its header is
  * whole, its commit word is written and its CRC matches: an interrupted upload leaves no half bank in play.
  *
  * Upload, SysEx (manufacturer 7D, non-commercial), one message at a time, each answered:
@@ -47,7 +47,7 @@ int ork_bank_bind(const uint8_t *image, uint32_t bytes)
     memcpy(&h, image, sizeof h);
     if (h.magic != ORK_MAGIC)
         return ORK_BANK_NONE;
-    if (h.version != 1 || h.header_bytes != sizeof h || h.total > bytes || h.total < sizeof h ||
+    if (h.version != 2 || h.header_bytes != sizeof h || h.total > bytes || h.total < sizeof h ||
         h.commit != ORK_COMMIT || h.maxl != 3 || !h.nzones || h.nzones > ORK_MAX_ZONES || !h.ninst ||
         h.ninst > ORK_MAX_INST || !h.npatch || h.npatch > ORK_MAX_PATCH ||
         h.zones_off < sizeof h || h.zones_off + h.nzones * sizeof(ork_zone_t) > h.total ||
@@ -59,20 +59,27 @@ int ork_bank_bind(const uint8_t *image, uint32_t bytes)
     memcpy(ork_bank.zone, image + h.zones_off, h.nzones * sizeof(ork_zone_t));
     memcpy(ork_bank.inst, image + h.inst_off, h.ninst * sizeof(ork_inst_t));
     memcpy(ork_bank.patch, image + h.patch_off, h.npatch * sizeof(ork_patch_t));
-    for (i = 0; i < h.nzones; i++) {                /* every zone inside the data, its loop inside the zone */
+#define WAVE_OK(off, n) ((off) <= h.data_bytes && (n) <= 2u * (h.data_bytes - (off)))
+    for (i = 0; i < h.nzones; i++) {                /* every wave inside the data, the loop inside its wave */
         const ork_zone_t *z = &ork_bank.zone[i];
-        if (z->off > h.data_bytes || z->n > 2u * (h.data_bytes - z->off) || !z->n || z->idx > 88u || !z->rate ||
-            z->rate > 4u << 16 || z->lo > z->hi || (z->looped && (z->ls >= z->le || z->le > z->n)))
+        if (!z->t_n || !WAVE_OK(z->t_off, z->t_n) || !z->rate || z->rate > 4u << 16 || z->lo > z->hi ||
+            ((z->flags & 1u) && (!WAVE_OK(z->l_off, z->l_n) || z->l_ls >= z->l_n || z->l_idx > 88u ||
+                                 z->w_t0 > z->w_t1)))
             return ORK_BANK_BAD;
     }
-    for (i = 0; i < h.ninst; i++)
-        if (!ork_bank.inst[i].nz || (uint32_t)ork_bank.inst[i].z0 + ork_bank.inst[i].nz > h.nzones)
+    for (i = 0; i < h.ninst; i++) {
+        const ork_inst_t *in = &ork_bank.inst[i];
+        if (!in->nz || (uint32_t)in->z0 + in->nz > h.nzones ||
+            (in->has_rel && (!in->rel_n || !WAVE_OK(in->rel_off, in->rel_n) || !in->rel_rate || in->rel_rate > 4u << 16)))
             return ORK_BANK_BAD;
+    }
+#undef WAVE_OK
     for (i = 0; i < h.npatch; i++) {
         if (!ork_bank.patch[i].nl || ork_bank.patch[i].nl > 3u)
             return ORK_BANK_BAD;
         for (k = 0; k < ork_bank.patch[i].nl; k++)
-            if (ork_bank.patch[i].l[k].inst >= h.ninst)
+            if (ork_bank.patch[i].l[k].inst >= h.ninst ||
+                (ork_bank.patch[i].l[k].tinst != 255u && ork_bank.patch[i].l[k].tinst >= h.ninst))
                 return ORK_BANK_BAD;
         ork_bank.patch[i].name[13] = 0;
     }

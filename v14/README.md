@@ -15,19 +15,28 @@ sequencer worden niet gebruikt.
 | 27 toetsen | spelen de klank, sturen MIDI uit (kanaal 1, USB/Bluetooth) |
 | KNOB 1 of PRESETS | klank kiezen (24); zet attack en release op die van de klank |
 | KNOB 2 / 3 / 4 | attack / release / ROOM (galm) |
+| ENV | ENV-menu open/dicht (ook HOME sluit): K1 attack, K2 release, K3 TRANSIENT (de aanzet; 64 = zoals opgenomen, 127 = harder, 0 = alleen de aanhoudende toon vanaf de eerste sample), K4 TAIL (het opgenomen uitklinken na loslaten; 0 = uit) |
 | LFO | LFO-menu open/dicht (ook HOME sluit): K1 snelheid, K2 vibrato (tot ±60 cent), K3 tremolo, K4 inloopvertraging (0–3 s). De LFO werkt zodra vibrato of tremolo boven 0 staat (lampje aan, "LFO" op het scherm) |
 | in het LFO-menu: SELECT | FREE (K1 in Hz, 0,3–16) of TEMPO (K1 een notenwaarde: 4 maten … 1/32, met punt- en triolen) |
 | in het LFO-menu: ALGORITHM | intern tempo, 40–300 BPM |
 | MIDI-clock in (DIN/TRS, USB, Bluetooth) | neemt het tempo over zolang hij loopt ("MIDI 121 BPM"); de LFO loopt vast op de tikken, Start = op de tel |
 | MIDI CC 1 (modwiel) | vibrato, ook met de LFO uit |
 | OCT- / OCT+ | octaaf −3..+3 |
-| SAVE | klank, attack, release, room en octaaf bewaren (terug na herstart) |
+| SAVE | klank, attack, release, room, transient, tail, LFO en octaaf bewaren (terug na herstart) |
 | MASTER | volume |
 | MIDI in (DIN/TRS, USB, Bluetooth) | noten op elk kanaal, CC 120/123 = alles uit |
 
 ## Klank
 
-De aanslag van elke noot is de echte opname. De aanhoudende toon daarna is stabiel: geen vibrato, geen zwelling.
+Elke noot bestaat uit drie losse delen, zoals een orkest-ROMpler:
+
+- **TRANSIENT** – de aanzet: de opname min de aanhoudende toon (strijkstok, lip, tong), los opgeslagen. Een klank
+  kan de transient van een ander instrument lenen: MARCATO = vioolsectie met de aanzet van SPICCATO.
+- **SUSTAIN** – een stabiele loop die tijdens de aanzet op een cosinus inzwelt; transient + sustain = de opname.
+- **RELEASE** – bij loslaten een opgenomen uitklinker van het instrument (strijkers, hout, koper), equal-power
+  overgenomen van de loop.
+
+Bij TRANSIENT en TAIL op 64 klinkt de noot zoals opgenomen. De aanhoudende toon daarna is stabiel: geen vibrato, geen zwelling.
 Blazers, contrabas en soloviool krijgen een loop die opnieuw is opgebouwd uit de boventonen van de opname (hun
 gemiddelde sterkte, een exact geheel aantal periodes); de strijkerssecties ook, met wat ensemble-glans op de hoge
 boventonen. Blazers en contrabas komen uit VSCO's opnames zonder vibrato. Beweging voeg je zelf toe met de LFO.
@@ -38,7 +47,7 @@ boventonen. Blazers en contrabas komen uit VSCO's opnames zonder vibrato. Bewegi
 | --- | --- |
 | `sdk/` | de FM1 SDK zoals M-VAVE hem levert (binaire engine, headers, boot- en updatebestanden); ongewijzigd |
 | `app/board/`, `app/audio_output.*` | FM1 Open's board-code; `audio.c` laat de audio-interrupt het orkest renderen |
-| `app/orkest_player.c` | de speler: IMA ADPCM, aanslag + loop, lagen, envelope, 24 stemmen, galm (alles in SRAM) |
+| `app/orkest_player.c` | de speler: IMA ADPCM, transient + sustain-loop + release, lagen, envelope, 24 stemmen, galm (alles in SRAM) |
 | `app/orkest_bank.c` | de klankbank in de gebruikersflash: controle (CRC, commit-woord) en de SysEx-upload |
 | `app/orkest_ui.c` | scherm (M-VAVE's 5x7-font), toetsen, knoppen, LEDs, instellingen |
 | `app/orkest_sdk.c` | MIDI in, SysEx, en de haken die de SDK van een app verwacht |
@@ -53,7 +62,7 @@ python3 tools/build_open.py . ~/.jieli/toolchain --out build/orkest-v14.fwsc   #
 tests/run_tests.sh
 ```
 
-De klankbank staat los van de firmware in de gebruikersflash (524 KB, nu ~400 KB gebruikt), dus nieuwe klanken
+De klankbank staat los van de firmware in de gebruikersflash (524 KB, nu ~480 KB gebruikt), dus nieuwe klanken
 vragen geen nieuwe firmware: alleen stap 2 van de installer.
 
 ## Licentie

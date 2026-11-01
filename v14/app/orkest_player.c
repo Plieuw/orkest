@@ -1,8 +1,15 @@
 /* SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception */
-/* Orkest's sample player (audio ISR). A zone is one recording: its attack (the transient, played once) and, for
- * sustained instruments, a crossfaded loop (the sustain, repeated while the key is held); one-shots (pizzicato,
- * harp, timpani ...) play to the end and ignore note off. A patch is up to three instruments layered, each with its
- * own key range, transposition, level and place on the stage. After the voices: a small stereo room.
+/* Orkest's sample player (audio ISR). Every note plays in three independent parts (bank format 2,
+ * v14/tools/gen_bank.py), each a stream of its own:
+ *   TRANSIENT  the recording's start minus its sustain: once, at ork_set.transient (64 = as recorded)
+ *   SUSTAIN    a steady loop in phase with the recording, swelling in over [w_t0, w_t1); with the transient turned
+ *              down it takes over the start too (0: the sustain alone from the first sample)
+ *   RELEASE    the instrument's recorded release, from note off, at ork_set.tail, handed over from the sustain with
+ *              equal power over the release time
+ * A patch layer may take its transients from another instrument (MARCATO: the spiccato's bite on the violins).
+ * One-shots (pizzicato, harp, timpani ...) are a transient alone, at full level. Patches layer up to three
+ * instruments, each with its own key range, transposition, level and place on the stage. Then the LFO (vibrato,
+ * tremolo; free or on the tempo, MIDI clock in) and a small stereo room.
  *
  * FM1 Open rules: every function the ISR runs and every table it reads live in internal SRAM (FM1_AUDIO_CODE,
  * FM1_AUDIO_DATA, .bss); the samples are read from the mapped user flash, which the SDK never programs while the
@@ -28,20 +35,29 @@ static FM1_AUDIO_DATA const uint32_t POW2[192] = {
 };
 /* envelope: frames for a full rise / fall, 1 ms .. 3 s (0..127, squared) -> step; computed at note on */
 
-typedef struct {
-    const ork_zone_t *z;
-    uint32_t pos, frac, step;    /* next sample to decode; position between s0 and s1 (Q16); samples per frame Q16 */
+typedef struct {                 /* one part of a note: a wave of the bank, decoded as it plays */
+    uint32_t off, n, ls, le;     /* the wave: data offset, samples, loop [ls, le) (le 0: played once) */
+    uint32_t pos, frac, step;    /* next sample; position between s0 and s1 (Q16); samples per frame (Q16) */
     int32_t pred, s0, s1;        /* the decoder's predictor; the two samples interpolated between */
+    int16_t lpred;               /* the decoder's state at ls */
+    uint8_t lidx, idx, on, ended;
+} stream_t;
+typedef struct {
+    stream_t t, l, r;            /* transient, sustain, release */
     uint32_t env, estep, age;    /* 0..ENV_MAX; per frame; started at */
+    uint32_t w_t0, w_t1, lpos;   /* the sustain's swell (source samples) and how far the sustain has played */
     uint16_t gl, gr;             /* level per side, Q15 */
-    uint16_t lfo_amt;            /* the LFO's share, 0..65535: fades in after note on (delay) */
-    uint16_t trem;               /* the tremolo gain at the end of the last block, Q15 */
-    uint8_t idx, note, stage, one, ended;
+    uint16_t lfo_amt, trem;      /* the LFO's share (fades in), the tremolo gain at the end of the last block */
+    uint16_t tg;                 /* the transient's level, Q14 (16384 = as recorded) */
+    uint16_t rg;                 /* the release's level, Q14 */
+    uint16_t w_last;             /* the sustain's level at the end of the last block, Q14 */
+    uint8_t note, n2, stage, one; /* the key; the note it plays (with the layer's transposition) */
+    uint8_t wk;                  /* the transient knob's share of the swell, Q8 (255: none) */
 } voice_t;
 static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
-struct ork_settings ork_set = {0, 8, 50, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12};
+struct ork_settings ork_set = {0, 8, 50, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64};
 struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0};
 
 /* ------------------------------------------------------------ events --- */
@@ -91,26 +107,26 @@ static FM1_AUDIO_CODE uint32_t env_step(uint32_t v)
     uint32_t ms = 1u + (v * v * 3000u) / (127u * 127u);
     return ENV_MAX / (ms * (FS / 1000u));
 }
-/* samples per output frame (Q16) of a zone played at MIDI note `note`: +-2 octaves (bounded decode load) */
-static FM1_AUDIO_CODE uint32_t zone_step(const ork_zone_t *z, int32_t note)
+/* samples per output frame (Q16) of a wave at `rate` (Q16 of 44100) and root `root16` played at MIDI note `note`:
+ * +-2 octaves (bounded decode load) */
+static FM1_AUDIO_CODE uint32_t pitch_step(uint32_t rate, int32_t root16, int32_t note)
 {
-    int32_t d16 = clampi(note * 16 - z->root16, -24 * 16, 24 * 16);
+    int32_t d16 = clampi(note * 16 - root16, -24 * 16, 24 * 16);
     uint32_t u = (uint32_t)(d16 + 4 * 192), oct = u / 192u;
-    uint64_t r = ((uint64_t)z->rate * POW2[u % 192u]) >> 30;
+    uint64_t r = ((uint64_t)rate * POW2[u % 192u]) >> 30;
     return (uint32_t)(oct >= 4u ? r << (oct - 4u) : r >> (4u - oct));
 }
-/* the next sample of the voice's zone (IMA ADPCM, two a byte, the even one low); a loop jumps back to ls in the
- * decoder state stored for it; past the end of a one-shot: silence, ended */
-static inline __attribute__((always_inline)) int32_t adpcm_next(voice_t *v)
+/* the next sample of a stream (IMA ADPCM, two a byte, the even one low); a loop jumps back to ls in the decoder state
+ * stored for it; past the end of a wave played once: silence, ended */
+static inline __attribute__((always_inline)) int32_t adpcm_next(stream_t *v)
 {
-    const ork_zone_t *z = v->z;
     uint32_t pos = v->pos, b, code;
     int32_t step, vd, s;
-    if (pos >= z->n) {
+    if (pos >= v->n) {
         v->ended = 1;
         return 0;
     }
-    b = ork_bank.data[z->off + (pos >> 1)];
+    b = ork_bank.data[v->off + (pos >> 1)];
     code = (pos & 1u) ? (b >> 4) : (b & 15u);
     step = IMA_STEP[v->idx];
     vd = step >> 3;
@@ -123,13 +139,44 @@ static inline __attribute__((always_inline)) int32_t adpcm_next(voice_t *v)
     s = clampi(v->pred + ((code & 8u) ? -vd : vd), -32768, 32767);
     v->pred = s;
     v->idx = (uint8_t)clampi((int32_t)v->idx + IMA_IDX[code & 7u], 0, 88);
-    if (++pos == z->le && z->looped) {
-        pos = z->ls;
-        v->pred = z->pred;
-        v->idx = z->idx;
+    if (++pos == v->le && v->le) {
+        pos = v->ls;
+        v->pred = v->lpred;
+        v->idx = v->lidx;
     }
     v->pos = pos;
     return s;
+}
+/* start a stream on a wave: from `start` in the decoder state given (a loop: its stored state at ls) */
+static FM1_AUDIO_CODE void stream_start(stream_t *v, uint32_t off, uint32_t n, uint32_t ls, uint32_t le, int32_t pred,
+                                        uint32_t idx, uint32_t step)
+{
+    v->off = off;
+    v->n = n;
+    v->ls = ls;
+    v->le = le;
+    v->lpred = (int16_t)pred;
+    v->lidx = (uint8_t)idx;
+    v->pos = ls;
+    v->pred = pred;
+    v->idx = (uint8_t)idx;
+    v->frac = 0;
+    v->step = step;
+    v->ended = 0;
+    v->on = 1;
+    v->s0 = 0;
+    v->s1 = adpcm_next(v);                      /* the interpolator starts between 0 and the first sample */
+}
+/* the next output sample of a stream at `step` (the LFO's) */
+static inline __attribute__((always_inline)) int32_t stream_sample(stream_t *v, uint32_t step)
+{
+    v->frac += step;
+    while (v->frac >= 65536u) {
+        v->frac -= 65536u;
+        v->s0 = v->s1;
+        v->s1 = adpcm_next(v);
+    }
+    return v->s0 + (((v->s1 - v->s0) * (int32_t)(v->frac >> 1)) >> 15);
 }
 static FM1_AUDIO_CODE voice_t *voice_alloc(void)
 {
@@ -146,6 +193,15 @@ static FM1_AUDIO_CODE voice_t *voice_alloc(void)
     }
     return rel ? rel : old;
 }
+static FM1_AUDIO_CODE const ork_zone_t *zone_of(const ork_inst_t *in, int32_t note)
+{
+    uint32_t k;
+    for (k = 0; k < in->nz; k++)
+        if (note >= ork_bank.zone[in->z0 + k].lo && note <= ork_bank.zone[in->z0 + k].hi)
+            return &ork_bank.zone[in->z0 + k];
+    return &ork_bank.zone[in->z0];
+}
+static uint8_t layer_inst[NVOICE];               /* the instrument a voice plays (its release) */
 static FM1_AUDIO_CODE void note_on(uint32_t note, uint32_t vel)
 {
     const ork_patch_t *p;
@@ -160,38 +216,44 @@ static FM1_AUDIO_CODE void note_on(uint32_t note, uint32_t vel)
         }
     for (l = 0; l < p->nl && l < 3u; l++) {
         const ork_layer_t *ly = &p->l[l];
-        const ork_inst_t *in;
-        const ork_zone_t *z;
+        const ork_inst_t *in, *tin;
+        const ork_zone_t *z, *zt;
         int32_t n2 = (int32_t)note + ly->tr;
-        uint32_t g, pan, k;
+        uint32_t g, pan, k = ork_set.transient;
         voice_t *v;
         if (ly->inst >= ork_bank.ni || note < ly->lo || note > ly->hi || n2 < 0 || n2 > 127)
             continue;
         in = &ork_bank.inst[ly->inst];
-        if (!in->nz || (uint32_t)in->z0 + in->nz > ork_bank.nz)
+        tin = ly->tinst < ork_bank.ni ? &ork_bank.inst[ly->tinst] : in;
+        if (!in->nz || !tin->nz)
             continue;
-        z = &ork_bank.zone[in->z0];
-        for (k = 0; k < in->nz; k++)
-            if (n2 >= ork_bank.zone[in->z0 + k].lo && n2 <= ork_bank.zone[in->z0 + k].hi) {
-                z = &ork_bank.zone[in->z0 + k];
-                break;
-            }
+        z = zone_of(in, n2);
+        zt = zone_of(tin, n2);
         v = voice_alloc();
-        v->z = z;
-        v->step = zone_step(z, n2);
-        v->pos = v->frac = 0;
-        v->pred = 0;
-        v->idx = 0;
-        v->s0 = 0;
-        v->ended = 0;
-        v->s1 = adpcm_next(v);                  /* the interpolator starts between 0 and the first sample */
+        layer_inst[v - voice] = ly->inst;
+        v->r.on = 0;
+        v->l.on = 0;
+        stream_start(&v->t, zt->t_off, zt->t_n, 0, 0, 0, 0, pitch_step(zt->rate, zt->root16, n2));
+        if (z->flags & 1u)
+            stream_start(&v->l, z->l_off, z->l_n, z->l_ls, z->l_n, z->l_pred, z->l_idx, pitch_step(z->rate, z->root16, n2));
+        v->w_t0 = z->w_t0;
+        v->w_t1 = z->w_t1;
+        v->lpos = 0;
+        v->one = !(z->flags & 1u) || in->one;
+        /* the transient's level and its share of the swell: one-shots are a transient alone, always whole */
+        if (v->one || k > 127u)
+            k = 64;
+        v->tg = (uint16_t)(k * 256u);
+        v->wk = (uint8_t)(k >= 64u ? 255u : k * 4u);   /* below 64 the sustain takes over the start too */
+        v->w_last = 0xFFFFu;                    /* (none yet: the first block starts where it is) */
+        v->rg = 0;
         v->env = 0;
         v->lfo_amt = 0;
         v->trem = 32767;
-        v->estep = env_step(in->one ? 0u : ork_set.attack);
+        v->estep = env_step(v->one ? 0u : ork_set.attack);
         v->stage = ST_ATTACK;
-        v->one = in->one;
         v->note = (uint8_t)note;
+        v->n2 = (uint8_t)n2;
         v->age = ++voice_clock;
         g = (((vq * ly->gain) >> 8) * in->gain) >> 8;
         if (g > 32767u)
@@ -203,23 +265,31 @@ static FM1_AUDIO_CODE void note_on(uint32_t note, uint32_t vel)
     ork_stat.last_note = (uint8_t)note;
     ork_stat.last_vel = (uint8_t)vel;
 }
+/* note off: the sustain releases over the release time; the instrument's release sample (TAIL) takes over */
+static FM1_AUDIO_CODE void release_voice(voice_t *v, uint32_t time, int tail)
+{
+    const ork_inst_t *in = &ork_bank.inst[layer_inst[v - voice] % (ork_bank.ni ? ork_bank.ni : 1u)];
+    v->stage = ST_RELEASE;
+    v->estep = env_step(time);
+    if (tail && ork_set.tail && in->has_rel && !v->one) {
+        stream_start(&v->r, in->rel_off, in->rel_n, 0, 0, 0, 0,
+                     pitch_step(in->rel_rate, in->rel_root16, v->n2));
+        v->rg = (uint16_t)((ork_set.tail * 256u * in->rel_gain) >> 8);
+    }
+}
 static FM1_AUDIO_CODE void note_off(uint32_t note)
 {
     uint32_t i;
     for (i = 0; i < NVOICE; i++)
-        if (voice[i].note == note && !voice[i].one && (voice[i].stage == ST_ATTACK || voice[i].stage == ST_SUSTAIN)) {
-            voice[i].stage = ST_RELEASE;
-            voice[i].estep = env_step(ork_set.release);
-        }
+        if (voice[i].note == note && !voice[i].one && (voice[i].stage == ST_ATTACK || voice[i].stage == ST_SUSTAIN))
+            release_voice(&voice[i], ork_set.release, 1);
 }
 static FM1_AUDIO_CODE void all_off(void)
 {
     uint32_t i;
     for (i = 0; i < NVOICE; i++)
-        if (voice[i].stage == ST_ATTACK || voice[i].stage == ST_SUSTAIN) {
-            voice[i].stage = ST_RELEASE;
-            voice[i].estep = env_step(voice[i].one ? 20u : ork_set.release);
-        }
+        if (voice[i].stage == ST_ATTACK || voice[i].stage == ST_SUSTAIN)
+            release_voice(&voice[i], voice[i].one ? 20u : ork_set.release, 0);
 }
 
 /* note events, held counts: a note held by several sources (a key and MIDI) ends when the last lets go */
@@ -346,6 +416,45 @@ static inline __attribute__((always_inline)) int32_t lfo_sine(uint32_t phase)
     return clampi((4 * q * (32768 - a)) >> 15, -32767, 32767);
 }
 
+/* ------------------------------------------------------------- swell --- */
+/* 0.5 - 0.5 cos(pi i / 64), Q14, i = 0..64: the sustain's raised-cosine swell (gen_bank.py raised()) */
+static FM1_AUDIO_DATA const uint16_t RC[65] = {
+#include "orkest_rc.inc"
+};
+/* the sustain's level (Q14) where it has played `pos` source samples: 0 before w_t0, 1 from w_t1; below 64 the
+ * transient knob gives it the start too (wk / 256 of the way to 1) */
+static inline __attribute__((always_inline)) int32_t swell(const voice_t *v, uint32_t pos)
+{
+    int32_t w;
+    if (pos >= v->w_t1)
+        w = 16384;
+    else if (pos <= v->w_t0)
+        w = 0;
+    else {
+        uint32_t span = v->w_t1 - v->w_t0, x = ((pos - v->w_t0) << 12) / span;   /* Q12 of 64 (32-bit: the swell < 2^20) */
+        uint32_t ix = x >> 6, fr = x & 63u;
+        w = RC[ix] + (int32_t)(((int32_t)RC[ix + 1u > 64u ? 64u : ix + 1u] - RC[ix]) * (int32_t)fr >> 6);
+    }
+    if (v->wk != 255u)
+        w = 16384 - (((16384 - w) * (int32_t)v->wk) >> 8);
+    return w;
+}
+static inline __attribute__((always_inline)) uint32_t isqrt32(uint32_t x)
+{
+    uint32_t r = 0, b = 1u << 30;
+    while (b > x)
+        b >>= 2;
+    while (b) {
+        if (x >= r + b) {
+            x -= r + b;
+            r = (r >> 1) + b;
+        } else
+            r >>= 1;
+        b >>= 2;
+    }
+    return r;
+}
+
 /* ----------------------------------------------------------- render --- */
 FM1_AUDIO_CODE unsigned orkest_output_level(void) { return ork_set.master; }
 
@@ -394,8 +503,9 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
     }
     for (k = 0; k < NVOICE; k++) {
         voice_t *v = &voice[k];
-        uint32_t step = v->step;
-        int32_t g0 = 32767, g1 = 32767, tremolo = 0;
+        uint32_t stt = v->t.step, stl = v->l.step, str = v->r.step, lend;
+        int32_t g0 = 32767, g1 = 32767, tremolo = 0, w0, w1, r0 = 0, r1 = 0, tg = v->tg;
+        int tail;
         if (v->stage == ST_OFF)
             continue;
         busy++;
@@ -405,7 +515,9 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
             if (lfo_vib_q8) {                       /* pitch: 1 + cents ln2 / 1200, the first order (<= 1 cent off) */
                 int32_t c8 = (int32_t)(((int64_t)lfo_vib_q8 * lfo_s >> 15) * v->lfo_amt >> 16);
                 int32_t d16 = (int32_t)(((int64_t)c8 * 9691) >> 16);
-                step = (uint32_t)((int64_t)step + (((int64_t)step * d16) >> 16));
+                stt = (uint32_t)((int64_t)stt + (((int64_t)stt * d16) >> 16));
+                stl = (uint32_t)((int64_t)stl + (((int64_t)stl * d16) >> 16));
+                str = (uint32_t)((int64_t)str + (((int64_t)str * d16) >> 16));
             }
             if (lfo_trem_q15) {                     /* level: down by depth x (1 - sine) / 2, glided over the block */
                 g0 = v->trem;
@@ -414,38 +526,44 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
                 tremolo = 1;
             }
         }
+        /* the sustain's level over this block: its swell (where it has got to), the transient knob's share */
+        lend = v->lpos + (uint32_t)(((uint64_t)stl * FM1_BLOCK_FRAMES) >> 16);
+        w1 = swell(v, lend);
+        w0 = v->w_last == 0xFFFFu ? swell(v, v->lpos) : v->w_last;
+        v->lpos = lend;
+        v->w_last = (uint16_t)w1;
+        /* the release over this block: equal power with the sustain's envelope (its level sqrt(1 - env^2)) */
+        tail = v->stage == ST_RELEASE && v->r.on && !v->r.ended;
+        if (tail) {
+            uint32_t e0 = v->env >> 15, e1 = v->env > v->estep * FM1_BLOCK_FRAMES ? (v->env - v->estep * FM1_BLOCK_FRAMES) >> 15 : 0u;
+            r0 = (int32_t)((v->rg * isqrt32(32767u * 32767u - (e0 > 32767u ? 32767u : e0) * (e0 > 32767u ? 32767u : e0))) >> 15);
+            r1 = (int32_t)((v->rg * isqrt32(32767u * 32767u - (e1 > 32767u ? 32767u : e1) * (e1 > 32767u ? 32767u : e1))) >> 15);
+        }
         for (i = 0; i < FM1_BLOCK_FRAMES; i++) {
-            int32_t s;
+            int32_t s = 0, w = w0 + (((w1 - w0) * (int32_t)i) >> 7);
             if (v->stage == ST_ATTACK) {
                 if (ENV_MAX - v->env <= v->estep) {
                     v->env = ENV_MAX;
                     v->stage = ST_SUSTAIN;
                 } else
                     v->env += v->estep;
-            } else if (v->stage == ST_RELEASE) {
-                if (v->env <= v->estep) {
-                    v->env = 0;
-                    v->stage = ST_OFF;
-                } else
-                    v->env -= v->estep;
-            }
-            v->frac += step;
-            while (v->frac >= 65536u) {
-                v->frac -= 65536u;
-                v->s0 = v->s1;
-                v->s1 = adpcm_next(v);
-            }
-            s = v->s0 + (((v->s1 - v->s0) * (int32_t)(v->frac >> 1)) >> 15);
+            } else if (v->stage == ST_RELEASE)
+                v->env = v->env <= v->estep ? 0u : v->env - v->estep;
+            if (v->t.on && !v->t.ended)
+                s = (stream_sample(&v->t, stt) * tg) >> 14;
+            if (v->l.on)
+                s += (stream_sample(&v->l, stl) * w) >> 14;
             s = (s * (int32_t)(v->env >> 15)) >> 15;
+            if (tail)
+                s += (stream_sample(&v->r, str) * (r0 + (((r1 - r0) * (int32_t)i) >> 7))) >> 14;
             if (tremolo)
                 s = (s * (g0 + (((g1 - g0) * (int32_t)i) >> 7))) >> 15;
             out[2u * i] += (s * v->gl) >> 16;       /* each voice at -6 dB: big chords reach the soft clip */
             out[2u * i + 1u] += (s * v->gr) >> 16;
-            if (v->stage == ST_OFF)
-                break;
         }
-        if (v->ended && v->s0 == 0 && v->s1 == 0)
-            v->stage = ST_OFF;                       /* a one-shot played to its end */
+        if ((v->stage == ST_RELEASE && !v->env && (!v->r.on || v->r.ended)) ||
+            (v->one && v->t.ended && !v->t.s0 && !v->t.s1))
+            v->stage = ST_OFF;                       /* released (and its release played), or a one-shot ended */
     }
     for (i = 0; i < FM1_BLOCK_FRAMES; i++) {
         int32_t l = out[2u * i], r = out[2u * i + 1u];
@@ -462,17 +580,24 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
 }
 
 #ifdef FM1_HOST_TEST
-/* tests/orkest_test.c: the sum of a zone's first `samples` samples as a voice decodes them (loops included) */
-long long ork_test_decode(unsigned zone, unsigned samples)
+/* tests/orkest_test.c: the sum of a wave's first `samples` samples as a stream decodes it: which 0 a zone's transient,
+ * 1 its sustain (from its loop start, looping), 2 an instrument's release (zone = the instrument) */
+long long ork_test_decode(unsigned zone, unsigned which, unsigned samples)
 {
-    voice_t v = {0};
+    stream_t v;
     long long sum = 0;
-    v.z = &ork_bank.zone[zone];
-    while (samples--)
+    const ork_zone_t *z = &ork_bank.zone[zone];
+    const ork_inst_t *in = &ork_bank.inst[zone % ORK_MAX_INST];
+    if (which == 0)
+        stream_start(&v, z->t_off, z->t_n, 0, 0, 0, 0, 65536);
+    else if (which == 1)
+        stream_start(&v, z->l_off, z->l_n, z->l_ls, z->l_n, z->l_pred, z->l_idx, 65536);
+    else
+        stream_start(&v, in->rel_off, in->rel_n, 0, 0, 0, 0, 65536);
+    sum = v.s1;
+    while (--samples)
         sum += adpcm_next(&v);
     return sum;
 }
-#endif
-#ifdef FM1_HOST_TEST
 uint32_t ork_test_lfo_phase(void) { return lfo_phase; }
 #endif

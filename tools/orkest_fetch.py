@@ -142,6 +142,47 @@ def tree():
     return [p for p in paths if p.lower().endswith(".wav")]
 
 
+# releases: one per sustained instrument, from its middle zone's whole recording: the end of the held note (0.3 s)
+# and its release (up to 0.7 s), where the player lets go -> assets/samples-cc0/<INSTRUMENT>/release/
+RELEASE_OF = ["VIOLINS", "VIOLAS", "CELLI", "BASSES", "SOLO VIOLIN", "TREMOLO", "FLUTE", "OBOE", "CLARINET", "BASSOON",
+              "HORN", "TRUMPET", "TROMBONE", "TUBA"]
+
+
+def release_excerpt(x, sr):
+    """(start, end) of the excerpt: 0.3 s of the held note before the release, the release to -60 dB or 0.7 s"""
+    w = int(0.02 * sr)
+    env = np.array([np.sqrt(np.mean(x[i:i + w] ** 2)) + 1e-9 for i in range(0, len(x) - w, w)])
+    db = 20 * np.log10(env)
+    steady = np.median(db[len(db) // 4:3 * len(db) // 4])
+    last = max(i for i in range(len(db)) if db[i] > steady - 6)      # the last moment at the held level
+    start = last * w
+    end = start + int(0.7 * sr)
+    quiet = [i for i in range(last, len(db)) if db[i] < steady - 60]
+    if quiet:
+        end = min(end, quiet[0] * w + w)
+    return max(0, start - int(0.3 * sr)), min(len(x), end)
+
+
+def fetch_releases(files, force, lines):
+    for name in RELEASE_OF:
+        rate, keep, picks = INSTRUMENTS[name]
+        folder, rx = picks[len(picks) // 2]
+        cand = sorted(f for f in files if f.rsplit("/", 1)[0] == folder and re.search(rx, f.rsplit("/", 1)[1]))
+        src = cand[0]
+        d = DEST / name.replace(" ", "_") / "release"
+        d.mkdir(parents=True, exist_ok=True)
+        out = d / src.rsplit("/", 1)[1]
+        lines.append(f"{name.replace(' ', '_')}/release/{out.name}  <-  {REPO}: {src} (its end)")
+        if out.exists() and not force:
+            continue
+        sr, x = read_wav_head(get(RAW + urllib.parse.quote(src)))
+        a, b = release_excerpt(x, sr)
+        g = np.gcd(sr, rate)
+        y = resample_poly(x[a:b], rate // g, sr // g)
+        write_wav16(out, rate, y)
+        print(f"{out.relative_to(ROOT)}: {len(y) / rate:.2f} s (from {a / sr:.2f} s of {len(x) / sr:.1f} s)")
+
+
 def main(force):
     files = tree()
     lines = []
@@ -164,9 +205,10 @@ def main(force):
             y = resample_poly(x, rate // g, sr // g)
             write_wav16(out, rate, y)
             print(f"{out.relative_to(ROOT)}: {len(y) / rate:.2f} s at {rate} Hz (from {sr} Hz)")
+    fetch_releases(files, force, lines)
     (DEST / "ATTRIBUTION.txt").write_text(
         "Orkest - sample sources\n"
-        f"Retrieved: {datetime.date.today().isoformat()} (the first seconds of each file, mono, resampled)\n"
+        f"Retrieved: {datetime.date.today().isoformat()} (the first seconds of each file, or for release/ its end; mono, resampled)\n"
         "Licence: CC0 1.0 Universal (public domain dedication)\n"
         "  https://creativecommons.org/publicdomain/zero/1.0/\n"
         "Source: Versilian Studios (Sam Gossner), VSCO-2 Community Edition\n"

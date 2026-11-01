@@ -58,5 +58,12 @@ int main(void){
   ctl.buttons = 1u << 5; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* LFO again: back */
   if (ork_set.lfo_on) { printf("screen test FAIL: vibrato and tremolo at 0: LFO off\n"); return 1; }
   if (ork_bank.np != 24 || ork_set.patch != 10 || strcmp(ork_bank.patch[10].name, "HARP")) { printf("screen test FAIL: the bank changed under the screen\n"); return 1; }
+  ctl.buttons = 1u << 4; groove_screen_control(); ctl.buttons = 0;   /* ENV: its menu; K3 transient +20, K4 tail -64 */
+  ctl.encoders[4] = 20; ctl.encoders[5] = -64; groove_screen_control(); ctl.encoders[4] = ctl.encoders[5] = 0;
+  for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-env.rgb565");
+  if (ork_set.transient != 84 || ork_set.tail != 0 || ork_set.patch != 10) { printf("screen test FAIL: ENV menu, K3 / K4\n"); return 1; }
+  ctl.buttons = 1u << 4; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* ENV again: back */
+  ctl.encoders[4] = 5; groove_screen_control(); ctl.encoders[4] = 0;
+  if (ork_set.transient != 84) { printf("screen test FAIL: ENV closes its menu\n"); return 1; }
   printf("screen test passed (build/host/screen-*.rgb565)\n");
   return 0;}
