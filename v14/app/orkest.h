@@ -100,27 +100,22 @@ struct ork_settings {
     /* the parts' levels: transient (0..127, 64 = as recorded; below, the sustain also takes over the start: 0 = the
      * sustain alone from the first sample), tail = the release sample (0 = none, 64 = as recorded) */
     volatile uint8_t transient, tail;
-    /* ARP: a key plays a phrase (orkest_phrases.inc) from its note instead of the note: on, phrase, speed (0 half,
-     * 1 as written, 2 double), gate (10..100 % of each note's length), mode (0 HOLD: loops while held, 1 ONCE: once
-     * through per press, 2 LATCH: loops until another key or ARP off); arp_inc: the internal tempo, MIDI clock ticks a
-     * block (Q16; MIDI clock in takes over while it runs) */
-    volatile uint8_t arp_on, arp_phrase, arp_speed, arp_gate, arp_mode;
-    /* SEQ: the scale ARP keeps to (orkest_scales.inc, 0 off) and its root (0 C .. 11 B); a phrase's notes outside it
+    /* ARP: a key plays phrases (orkest_phrases.inc) from its note instead of the note, monophonic (the newest key
+     * wins): on, mode (0 HOLD: loops while held, 1 ONCE: once through per press, 2 LATCH: loops until another key or
+     * ARP off); arp_inc: the internal tempo, MIDI clock ticks a block (Q16; MIDI clock in takes over while it runs) */
+    volatile uint8_t arp_on, arp_mode;
+    /* SCL: the scale ARP keeps to (orkest_scales.inc, 0 off) and its root (0 C .. 11 B); a phrase's notes outside it
      * move to the nearest note in it (the lower one at a tie) */
     volatile uint8_t scale, scale_root;
-    /* ARP velocity, apart from the phrase: velo_pat (orkest_velo.inc; 0 the phrase's own), one step a note played;
-     * velo_depth 0..100 % of the pattern; velo_human 0..100 (a random +-0..30); velo_reset 0 FREE (runs on over the
-     * phrase's repeats), 1 LOOP (from its start with each repeat) */
-    volatile uint8_t velo_pat, velo_depth, velo_human, velo_reset;
-    /* SEQ PARTS: with parts_on, ARP plays up to four parts from each key, each its own sound (part_patch: 0 off,
-     * else the patch + 1), phrase, velocity pattern and octave (-2..+2) */
-    volatile uint8_t parts_on;
-    volatile uint8_t part_patch[4], part_phrase[4], part_velo[4];
-    volatile int8_t part_oct[4];
-    volatile uint8_t part_mask;                         /* which parts play (bit p: part p), set in the ARP menu */
-    /* call and response (SEQ PARTS): parts 1 + 2 play a turn, then parts 3 + 4, and so on; cr_len: the turn's length,
-     * ORK_CR_TICKS[cr_len] clock ticks (24 a beat) */
-    volatile uint8_t cr_on, cr_len;
+    /* the ARP's two parts, each its own pages: its sound (patch; part 2: 255 off), phrase, speed (0 half, 1 as
+     * written, 2 double), gate (10..100 % of each note), octave (-2..+2); its velocity pattern (orkest_velo.inc, 0 the
+     * phrase's own; one step a note played, running on over the phrase's repeats), depth (0..100 %), humanize (0..100:
+     * a random +-0..30) */
+    struct ork_part {
+        volatile uint8_t patch, phrase, speed, gate;
+        volatile int8_t oct;
+        volatile uint8_t velo, depth, human;
+    } part[2];
     /* GLO: panning; pan_mode 0 the concert seating (orkest_seats.inc), 1 the sound's own layer pans; pan_spread
      * 0..127 % of it (0: all in the middle) */
     volatile uint8_t pan_mode, pan_spread;

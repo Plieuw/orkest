@@ -19,6 +19,13 @@
 #define ORK_PHRASE_EVENTS
 #define ORK_PHRASE_NAMES
 #include "orkest_phrases.inc"
+/* ARP part 1's fields under their earlier names */
+#define arp_phrase part[0].phrase
+#define arp_speed part[0].speed
+#define arp_gate part[0].gate
+#define velo_pat part[0].velo
+#define velo_depth part[0].depth
+#define velo_human part[0].human
 
 /* --------------------------------------------------- simulated SDK --- */
 #define FLASH_BYTES 536576u
@@ -156,7 +163,7 @@ static int patch_of(const char *name)
     fprintf(stderr, "no patch %s\n", name);
     exit(2);
 }
-static void use(int p) { ork_set.patch = (uint8_t)p; ork_set.attack = ork_bank.patch[p].attack; ork_set.release = ork_bank.patch[p].release; }
+static void use(int p) { ork_set.patch = (uint8_t)p; ork_set.part[0].patch = (uint8_t)p; ork_set.attack = ork_bank.patch[p].attack; ork_set.release = ork_bank.patch[p].release; }
 static unsigned sounding(void) { render(1); return ork_stat.voices; }
 static void note(uint8_t st, uint8_t n, uint8_t v) { (void)ork_post(1, st, n, v); }
 
@@ -661,31 +668,24 @@ int main(int argc, char **argv)
             printf("  GALLOP velocities %u .. %u (key 100)\n", lo, hi);
             check("ARP velocity: GALLOP's notes soft and accented (spread > 30)", q < ORK_NPHRASE && hi - lo > 30u);
         }
-        {   /* a velocity pattern apart from the phrase: ACCENT 3 (120 70 70) over OSTINATO (8 notes) */
-            static const uint8_t WANT_FREE[10] = {120, 70, 70, 120, 70, 70, 120, 70, 70, 120};
-            static const uint8_t WANT_LOOP[10] = {120, 70, 70, 120, 70, 70, 120, 70, 120, 70};
+        {   /* a velocity pattern apart from the phrase: ACCENT 3 (120 70 70) over OSTINATO (8 notes), on over its repeat */
+            static const uint8_t WANT[10] = {120, 70, 70, 120, 70, 70, 120, 70, 70, 120};
             uint8_t got[10];
-            unsigned b, nn, pass, ok[2] = {1, 1};
-            int lastn;
+            unsigned b, nn, ok = 1;
             ork_set.arp_phrase = 0; ork_set.velo_pat = 3; ork_set.velo_depth = 100; ork_set.velo_human = 0;
-            for (pass = 0; pass < 2u; pass++) {
-                ork_set.velo_reset = (uint8_t)pass;
-                render(10);
-                (void)ork_post(0, 0x90, 60, 100);
-                for (b = 0, nn = 0, lastn = -1; b < 1300u * 441u / 1280u && nn < 10u; b++) {
-                    unsigned before = ork_stat.last_note;
-                    ork_stat.last_note = 255;            /* (to see each note on, repeated pitches too) */
-                    orkest_render(blk);
-                    if (ork_stat.last_note != 255) { got[nn++] = ork_stat.last_vel; lastn = ork_stat.last_note; }
-                    else ork_stat.last_note = (uint8_t)before;
-                }
-                (void)ork_post(0, 0x80, 60, 0); render(1500);
-                for (b = 0; b < 10u; b++) if (b >= nn || got[b] != (pass ? WANT_LOOP : WANT_FREE)[b]) ok[pass] = 0;
-                (void)lastn;
+            render(10);
+            (void)ork_post(0, 0x90, 60, 100);
+            for (b = 0, nn = 0; b < 1300u * 441u / 1280u && nn < 10u; b++) {
+                unsigned before = ork_stat.last_note;
+                ork_stat.last_note = 255;            /* (to see each note on, repeated pitches too) */
+                orkest_render(blk);
+                if (ork_stat.last_note != 255) got[nn++] = ork_stat.last_vel;
+                else ork_stat.last_note = (uint8_t)before;
             }
-            check("velocity pattern ACCENT 3 over an 8-note phrase, FREE: 120 70 70 runs on across the repeat", ok[0]);
-            check("... LOOP: from its start with each repeat", ok[1]);
-            ork_set.velo_pat = 0; ork_set.velo_reset = 0;
+            (void)ork_post(0, 0x80, 60, 0); render(1500);
+            for (b = 0; b < 10u; b++) if (b >= nn || got[b] != WANT[b]) ok = 0;
+            check("velocity pattern ACCENT 3 over an 8-note phrase: 120 70 70 runs on across the repeat", ok);
+            ork_set.velo_pat = 0;
         }
         {   /* mono: a second key takes over (last key priority): one phrase, from the new key */
             unsigned b, two = 0;
@@ -702,55 +702,24 @@ int main(int argc, char **argv)
             ork_set.arp_gate = 90; ork_set.tail = 64;
             use(patch_of("HARP"));
         }
-        {   /* SEQ PARTS (as the player starts): CELLI ALBERTI an octave down, VIOLINS ARP UP DOWN, FLUTE TRILL up */
-            unsigned b, most = 0;
-            check("PARTS defaults: ALBERTI, ARP UP DOWN, TRILL; CELLI, VIOLINS, FLUTE",
-                  !strcmp(PHRASE_NAME[ork_set.part_phrase[0]][0], "ALBERTI") &&
-                  !strcmp(PHRASE_NAME[ork_set.part_phrase[1]][0], "ARP UP DOWN") &&
-                  !strcmp(PHRASE_NAME[ork_set.part_phrase[2]][0], "TRILL") &&
-                  !strcmp(ork_bank.patch[ork_set.part_patch[0] - 1].name, "CELLI") &&
-                  !strcmp(ork_bank.patch[ork_set.part_patch[1] - 1].name, "VIOLINS") &&
-                  !strcmp(ork_bank.patch[ork_set.part_patch[2] - 1].name, "FLUTE") && !ork_set.part_patch[3]);
-            ork_set.arp_on = 1; ork_set.arp_mode = 0; ork_set.parts_on = 1;
-            render(10);
-            (void)ork_post(0, 0x90, 60, 100);
-            for (b = 0; b < 800u * 441u / 1280u; b++) { orkest_render(blk); if (ork_stat.voices > most) most = ork_stat.voices; }
-            check("PARTS on, one key: three parts sounding at once", most >= 3u);
-            (void)ork_post(0, 0x80, 60, 0); render(3000);
-            check("... let go (HOLD): all three end", sounding() == 0);
-            ork_set.part_mask = 5;                   /* parts 1 and 3 only */
-            ork_set.tail = 0; ork_set.release = 0; ork_set.arp_gate = 50;
-            render(10);
-            most = 0;
-            (void)ork_post(0, 0x90, 60, 100);
-            for (b = 0; b < 800u * 441u / 1280u; b++) { orkest_render(blk); if (ork_stat.voices > most) most = ork_stat.voices; }
-            (void)ork_post(0, 0x80, 60, 0); render(3000);
-            printf("  parts 1 and 3: at most %u voices\n", most);
-            check("... parts 1 and 3 chosen: two sounding", most >= 2u && most < 6u);
-            ork_set.part_mask = 15; ork_set.tail = 64; ork_set.arp_gate = 90;
-            {   /* call and response, a turn of 1 beat: CELLI + VIOLINS, then FLUTE (its trill's D5), then again */
-                unsigned flute1 = 0, celli2 = 0, flute2 = 0, celli3 = 0;
-                ork_set.cr_on = 1; ork_set.cr_len = 0;
+        {   /* two parts: part 2 (FLUTE, TRILL, an octave up) with part 1 from the same key; part 2 off: part 1 alone */
+            unsigned b, most[2] = {0, 0}, w;
+            ork_set.arp_on = 1; ork_set.arp_mode = 0; ork_set.arp_phrase = 0; ork_set.arp_gate = 50;
+            ork_set.tail = 0; ork_set.release = 0;
+            ork_set.part[1].patch = (uint8_t)patch_of("FLUTE"); ork_set.part[1].gate = 50;
+            ork_set.part[0].patch = (uint8_t)patch_of("VIOLINS");
+            for (w = 0; w < 2u; w++) {
+                if (w) ork_set.part[1].patch = 255;
                 render(10);
                 (void)ork_post(0, 0x90, 60, 100);
-                for (b = 0; b < 1500u * 441u / 1280u; b++) {
-                    unsigned ms = b * 128u * 1000u / 44100u, n0 = ork_stat.last_note;
-                    ork_stat.last_note = 255;
-                    orkest_render(blk);
-                    if (ork_stat.last_note == 255) { ork_stat.last_note = (uint8_t)n0; continue; }
-                    if (ms < 480u && ork_stat.last_note == 74) flute1++;
-                    if (ms >= 510u && ms < 980u && ork_stat.last_note == 64) celli2++;   /* (the violins' E4) */
-                    if (ms >= 510u && ms < 980u && ork_stat.last_note == 74) flute2++;
-                    if (ms >= 1010u && ork_stat.last_note == 64) celli3++;
-                }
-                (void)ork_post(0, 0x80, 60, 0); render(3000);
-                printf("  call and response: flute in the call %u, violins in the response %u, flute %u, violins again %u\n",
-                       flute1, celli2, flute2, celli3);
-                check("CALL RESP, 1 beat: parts 1 + 2, then part 3, then 1 + 2 again", !flute1 && !celli2 && flute2 && celli3);
-                ork_set.cr_on = 0; ork_set.cr_len = 3;
+                for (b = 0; b < 800u * 441u / 1280u; b++) { orkest_render(blk); if (ork_stat.voices > most[w]) most[w] = ork_stat.voices; }
+                (void)ork_post(0, 0x80, 60, 0); render(1500);
             }
-            ork_set.parts_on = 0;
-            render(10);
+            printf("  two parts: at most %u voices; part 2 off: %u\n", most[0], most[1]);
+            check("ARP two parts: part 1 and part 2 sounding from one key", most[0] >= 2u);
+            check("... part 2 OFF: part 1 alone", most[1] == 1u);
+            check("... let go: silence", sounding() == 0);
+            ork_set.arp_gate = 90; ork_set.part[1].gate = 90; ork_set.tail = 64;
         }
         ork_set.arp_on = 1; ork_set.arp_mode = 0;
         for (t = 0; t < ORK_NPHRASE; t++) {         /* every phrase, mono, two keys: sane, one voice, ends when let go */

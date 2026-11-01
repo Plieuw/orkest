@@ -166,25 +166,26 @@ static void knob_row(unsigned l, const char *label, const char *value, uint16_t 
 }
 
 /* --------------------------------------------------------- settings --- */
-#define SET_MAGIC 0x3853524FU    /* "ORS8" (earlier records: what they hold, the rest the defaults) */
-#define SET_MAGIC_7 0x3753524FU  /* "ORS7": up to the part mask, its check where part_mask is */
-#define SET_MAGIC_6 0x3653524FU  /* "ORS6": up to the parts, its check where part_patch is */
-#define SET_MAGIC_5 0x3553524FU  /* "ORS5": up to the velocity fields, its check where velo_depth is */
-#define SET_MAGIC_4 0x3453524FU  /* "ORS4": up to the ARP fields, its check where they start */
-#define SET_MAGIC_3 0x3353524FU  /* "ORS3": the same, transient and tail zero */
+#define SET_MAGIC 0x3953524FU    /* "ORS9" (earlier records: what they hold, the rest the defaults) */
+/* earlier records: their magic, where their check is (what they hold before it) */
+static const struct { uint32_t magic; uint8_t check; } OLD_SET[] = {
+    {0x3853524FU, 52}, {0x3753524FU, 48}, {0x3653524FU, 32}, {0x3553524FU, 28}, {0x3453524FU, 20}, {0x3353524FU, 20}};
 struct settings {
     uint32_t magic;
     uint8_t patch, attack, release, reverb;
     int8_t octave;
     uint8_t lfo_on, lfo_rate, lfo_vib, lfo_trem, lfo_delay, lfo_sync, lfo_div;
     uint16_t bpm;
-    uint8_t transient, tail;
-    uint8_t arp_on, arp_phrase, arp_speed, arp_gate, arp_mode, scale, scale_root;
-    uint8_t velo_pat, velo_depth, velo_human, velo_reset, parts_on;   /* parts_on: 0 in ORS6 (its pad) */
-    uint8_t part_patch[4], part_phrase[4], part_velo[4];
-    int8_t part_oct[4];
-    uint8_t part_mask, cr_on, cr_len3;        /* cr_len3: the turn ^ 3 (0 in older records: 1 bar) */
-    uint8_t pan;                              /* bit 7 pan_mode, bits 0..6 pan_spread ^ 100 (0 in older records) */
+    uint8_t transient, tail;                  /* from ORS4 */
+    uint8_t arp_on, p0_phrase, p0_speed, p0_gate, arp_mode, scale, scale_root;   /* from ORS5 (part 1's phrase) */
+    uint8_t p0_velo, p0_depth, p0_human;      /* from ORS6 */
+    uint8_t unused, p0_patch;                 /* from here ORS9 */
+    int8_t p0_oct;
+    uint8_t p1_patch, p1_phrase, p1_speed, p1_gate;
+    int8_t p1_oct;
+    uint8_t p1_velo, p1_depth, p1_human;
+    uint8_t pan;                              /* bit 7 pan_mode, bits 0..6 pan_spread */
+    uint8_t pad[2];
     uint32_t check;
 };
 /* the LFO's note values in TEMPO: MIDI clock ticks a cycle (24 a quarter note) */
@@ -223,75 +224,37 @@ static uint32_t set_offset(void)
     uint32_t size = fm1_flash_size();
     return size >= FM1_FLASH_SECTOR_BYTES ? size - FM1_FLASH_SECTOR_BYTES : 0;
 }
+static void part_load(unsigned p, uint8_t patch, uint8_t phrase, uint8_t speed, uint8_t gate, int8_t oct,
+                      uint8_t velo, uint8_t depth, uint8_t human)
+{
+    struct ork_part *pt = (struct ork_part *)&ork_set.part[p];
+    pt->patch = patch < ORK_MAX_PATCH || (p && patch == 255u) ? patch : 0u;
+    pt->phrase = phrase < ORK_NPHRASE ? phrase : 0u;
+    pt->speed = speed <= 2u ? speed : 1u;
+    pt->gate = gate >= 10u && gate <= 100u ? gate : 90u;
+    pt->oct = (int8_t)(oct < -2 ? -2 : oct > 2 ? 2 : oct);
+    pt->velo = velo < ORK_NVELO ? velo : 0u;
+    pt->depth = depth <= 100u ? depth : 100u;
+    pt->human = human <= 100u ? human : 0u;
+}
 static void settings_load(void)
 {
     struct settings s;
-    uint32_t old;
+    uint32_t old, at = 0, ver = 9, i;          /* ver: the record's ORS number */
     if (!fm1_flash_size() || fm1_flash_read(set_offset(), &s, sizeof s) != FM1_FLASH_OK)
         return;
-    {   /* each record its check after what it holds */
-        uint32_t at = s.magic == SET_MAGIC ? offsetof(struct settings, check)
-            : s.magic == SET_MAGIC_7 ? offsetof(struct settings, part_mask)
-            : s.magic == SET_MAGIC_6 ? offsetof(struct settings, part_patch)
-            : s.magic == SET_MAGIC_5 ? offsetof(struct settings, velo_depth)
-            : s.magic == SET_MAGIC_4 || s.magic == SET_MAGIC_3 ? offsetof(struct settings, arp_on) : 0u;
-        if (!at)
-            return;
-        memcpy(&old, (const uint8_t *)&s + at, 4);
-        if (old != set_check(&s, at))
-            return;
-    }
-    if (s.magic != SET_MAGIC)                       /* from before the part mask: every part */
-        s.part_mask = 15;
-    if (s.magic != SET_MAGIC && s.magic != SET_MAGIC_7) {   /* from before the parts: as the player starts */
-        unsigned k;
-        s.parts_on = 0;
-        for (k = 0; k < 4u; k++) {
-            s.part_patch[k] = ork_set.part_patch[k];
-            s.part_phrase[k] = ork_set.part_phrase[k];
-            s.part_velo[k] = ork_set.part_velo[k];
-            s.part_oct[k] = ork_set.part_oct[k];
+    if (s.magic == SET_MAGIC)
+        at = offsetof(struct settings, check);
+    for (i = 0; !at && i < sizeof OLD_SET / sizeof OLD_SET[0]; i++)
+        if (s.magic == OLD_SET[i].magic) {
+            at = OLD_SET[i].check;
+            ver = 8u - i;
         }
-    }
-    if (s.magic != SET_MAGIC && s.magic != SET_MAGIC_7 && s.magic != SET_MAGIC_6) {   /* from before the velocity patterns */
-        s.velo_pat = s.velo_human = s.velo_reset = 0;
-        s.velo_depth = 100;
-    }
-    if (s.magic != SET_MAGIC && s.magic != SET_MAGIC_7 && s.magic != SET_MAGIC_6 && s.magic != SET_MAGIC_5)   /* from before the scale */
-        s.scale = s.scale_root = 0;
-    if (s.magic == SET_MAGIC_3)                     /* from before the ENV menu: the parts as recorded */
-        s.transient = s.tail = 64;
-    if (s.magic == SET_MAGIC_4 || s.magic == SET_MAGIC_3) {   /* from before the ARP menu: its defaults */
-        s.arp_on = s.arp_phrase = s.arp_mode = 0;
-        s.arp_speed = 1;
-        s.arp_gate = 90;
-    }
-    ork_set.arp_on = s.arp_on & 1u;
-    ork_set.arp_phrase = s.arp_phrase < ORK_NPHRASE ? s.arp_phrase : 0u;
-    ork_set.arp_speed = s.arp_speed <= 2u ? s.arp_speed : 1u;
-    ork_set.arp_gate = s.arp_gate >= 10u && s.arp_gate <= 100u ? s.arp_gate : 90u;
-    ork_set.arp_mode = s.arp_mode <= 2u ? s.arp_mode : 0u;
-    ork_set.scale = s.scale < ORK_NSCALE ? s.scale : 0u;
-    ork_set.scale_root = s.scale_root % 12u;
-    ork_set.velo_pat = s.velo_pat < ORK_NVELO ? s.velo_pat : 0u;
-    ork_set.velo_depth = s.velo_depth <= 100u ? s.velo_depth : 100u;
-    ork_set.velo_human = s.velo_human <= 100u ? s.velo_human : 0u;
-    ork_set.velo_reset = s.velo_reset & 1u;
-    ork_set.parts_on = s.parts_on & 1u;
-    ork_set.part_mask = s.part_mask & 15u;
-    ork_set.cr_on = s.magic == SET_MAGIC ? s.cr_on & 1u : 0u;
-    ork_set.pan_mode = s.magic == SET_MAGIC ? s.pan >> 7 : 0u;
-    ork_set.pan_spread = s.magic == SET_MAGIC ? (uint8_t)((s.pan & 127u) ^ 100u) : 100u;
-    ork_set.cr_len = s.magic == SET_MAGIC ? (uint8_t)((s.cr_len3 ^ 3u) % ORK_NCR) : 3u;
-    {
-        unsigned k;
-        for (k = 0; k < 4u; k++) {
-            ork_set.part_patch[k] = s.part_patch[k] <= ORK_MAX_PATCH ? s.part_patch[k] : 0u;
-            ork_set.part_phrase[k] = s.part_phrase[k] < ORK_NPHRASE ? s.part_phrase[k] : 0u;
-            ork_set.part_velo[k] = s.part_velo[k] < ORK_NVELO ? s.part_velo[k] : 0u;
-            ork_set.part_oct[k] = (int8_t)(s.part_oct[k] < -2 ? -2 : s.part_oct[k] > 2 ? 2 : s.part_oct[k]);
-        }
-    }
+    if (!at)
+        return;
+    memcpy(&old, (const uint8_t *)&s + at, 4);
+    if (old != set_check(&s, at))
+        return;
     ork_set.patch = s.patch;
     ork_set.attack = s.attack & 127u;
     ork_set.release = s.release & 127u;
@@ -305,12 +268,26 @@ static void settings_load(void)
     ork_set.lfo_sync = s.lfo_sync & 1u;
     lfo_div = s.lfo_div;
     bpm = s.bpm;
-    ork_set.transient = s.transient & 127u;
-    ork_set.tail = s.tail & 127u;
+    ork_set.transient = ver >= 4u ? s.transient & 127u : 64u;
+    ork_set.tail = ver >= 4u ? s.tail & 127u : 64u;
+    if (ver >= 5u) {
+        ork_set.arp_on = s.arp_on & 1u;
+        ork_set.arp_mode = s.arp_mode <= 2u ? s.arp_mode : 0u;
+        ork_set.scale = s.scale < ORK_NSCALE ? s.scale : 0u;
+        ork_set.scale_root = s.scale_root % 12u;
+        part_load(0, ver >= 9u ? s.p0_patch : s.patch, s.p0_phrase, s.p0_speed, s.p0_gate, ver >= 9u ? s.p0_oct : 0,
+                  ver >= 6u ? s.p0_velo : 0u, ver >= 6u ? s.p0_depth : 100u, ver >= 6u ? s.p0_human : 0u);
+    }
+    if (ver >= 9u) {
+        part_load(1, s.p1_patch, s.p1_phrase, s.p1_speed, s.p1_gate, s.p1_oct, s.p1_velo, s.p1_depth, s.p1_human);
+        ork_set.pan_mode = s.pan >> 7;
+        ork_set.pan_spread = s.pan & 127u;
+    }
 }
 static int settings_save(void)
 {
     struct settings s;
+    const struct ork_part *p0 = (const struct ork_part *)&ork_set.part[0], *p1 = (const struct ork_part *)&ork_set.part[1];
     memset(&s, 0, sizeof s);
     s.magic = SET_MAGIC;
     s.patch = ork_set.patch;
@@ -329,30 +306,14 @@ static int settings_save(void)
     s.transient = ork_set.transient;
     s.tail = ork_set.tail;
     s.arp_on = ork_set.arp_on;
-    s.arp_phrase = ork_set.arp_phrase;
-    s.arp_speed = ork_set.arp_speed;
-    s.arp_gate = ork_set.arp_gate;
     s.arp_mode = ork_set.arp_mode;
     s.scale = ork_set.scale;
     s.scale_root = ork_set.scale_root;
-    s.velo_pat = ork_set.velo_pat;
-    s.velo_depth = ork_set.velo_depth;
-    s.velo_human = ork_set.velo_human;
-    s.velo_reset = ork_set.velo_reset;
-    s.parts_on = ork_set.parts_on;
-    s.part_mask = ork_set.part_mask;
-    s.cr_on = ork_set.cr_on;
-    s.cr_len3 = (uint8_t)(ork_set.cr_len ^ 3u);
-    s.pan = (uint8_t)((ork_set.pan_mode ? 128u : 0u) | ((ork_set.pan_spread & 127u) ^ 100u));
-    {
-        unsigned k;
-        for (k = 0; k < 4u; k++) {
-            s.part_patch[k] = ork_set.part_patch[k];
-            s.part_phrase[k] = ork_set.part_phrase[k];
-            s.part_velo[k] = ork_set.part_velo[k];
-            s.part_oct[k] = ork_set.part_oct[k];
-        }
-    }
+    s.p0_patch = p0->patch, s.p0_phrase = p0->phrase, s.p0_speed = p0->speed, s.p0_gate = p0->gate, s.p0_oct = p0->oct;
+    s.p0_velo = p0->velo, s.p0_depth = p0->depth, s.p0_human = p0->human;
+    s.p1_patch = p1->patch, s.p1_phrase = p1->phrase, s.p1_speed = p1->speed, s.p1_gate = p1->gate, s.p1_oct = p1->oct;
+    s.p1_velo = p1->velo, s.p1_depth = p1->depth, s.p1_human = p1->human;
+    s.pan = (uint8_t)((ork_set.pan_mode ? 128u : 0u) | (ork_set.pan_spread & 127u));
     s.check = set_check(&s, offsetof(struct settings, check));
     if (!fm1_flash_size() || fm1_flash_erase(set_offset()) != FM1_FLASH_OK)
         return -1;
@@ -381,11 +342,8 @@ static int scale_store(void)
 /* ------------------------------------------------------------ state --- */
 static uint32_t prev_keys, blocked_keys, prev_buttons, led_shown, event_until, splash_until, frame_ms;
 static uint8_t lfo_menu;           /* the LFO menu is open: the knobs set the LFO */
-static uint8_t arp_menu;           /* the ARP menu is open: the knobs choose and shape the phrase */
-static uint8_t scale_menu;         /* 1 the SCL menu: the ARP's scale; 2 the SEQ menu: PARTS (four sounds, each its phrase) */
-static uint8_t part_field;         /* PARTS: what K1..K4 set: 0 sound, 1 phrase, 2 velocity, 3 octave, 4 call+response */
-static const char *const CR_NAME[ORK_NCR] = {"1 BEAT", "2 BEATS", "3 BEATS", "1 BAR", "2 BARS", "3 BARS", "4 BARS",
-                                            "8 BARS"};
+static uint8_t arp_menu;           /* the ARP menu's page: 1 part 1, 2 its velocity, 3 part 2, 4 its velocity (0 closed) */
+static uint8_t scale_menu;         /* the SCL menu is open: the ARP's scale */
 static uint8_t scale_dirty;        /* changed, not yet stored: when the menu closes, or 5 s after the last turn */
 static uint32_t scale_turned;
 static uint8_t pan_menu;           /* the GLO menu is open: panning */
@@ -428,8 +386,7 @@ static void leds(void)
         want |= 1u << 29;
     if (ork_set.arp_on)
         want |= 1u << 30;
-    if (ork_set.parts_on)
-        want |= 1u << 31;
+
     if (octave < 0)
         want |= 1u << 27;
     if (octave > 0)
@@ -446,21 +403,21 @@ static void leds(void)
         fm1_led_set(B_LFO, ork_set.lfo_on);
     if (diff & (1u << 30))
         fm1_led_set(B_ARP, ork_set.arp_on);
-    if (diff & (1u << 31))
-        fm1_led_set(B_SEQ, ork_set.parts_on);
+
     led_shown = want;
 }
 
-static const char *arp_hint(void)   /* on / off, the tempo the phrases follow, the way on (40 characters at most) */
+static const char *arp_hint(void)   /* on / off, the tempo, the mode (PRESETS) (40 characters at most) */
 {
     static char b[48];
+    static const char *const MODE[3] = {"HOLD", "ONCE", "LATCH"};
     unsigned t10 = ork_stat.clock ? ork_stat.clock_bpm10 : bpm * 10u;
     char *p = put_str(b, ork_set.arp_on ? "ON  " : "OFF  ");
     p = put_str(p, ork_stat.clock ? "MIDI " : "");
     p = put_int(p, (int)((t10 + 5u) / 10u));
-    p = put_str(p, ork_stat.clock ? "" : " BPM");
-    put_str(p, arp_menu == 3u ? "  SELECT PARTS  ARP BACK" : arp_menu == 2u ? "  SELECT ON OFF  ARP PARTS"
-               : "  SELECT ON OFF  ARP VELO");
+    p = put_str(p, ork_stat.clock ? "  " : " BPM  ");
+    p = put_str(p, MODE[ork_set.arp_mode % 3u]);
+    put_str(p, "  PRESETS MODE");
     return b;
 }
 static void draw(uint32_t now)
@@ -516,28 +473,10 @@ static void draw(uint32_t now)
         p = put_int(p, (int)(d % 10u));
         put_str(p, " S");
         knob_row(L_K4, "K4 DELAY", v, TEXT);
-    } else if (arp_menu == 3u) {                    /* the ARP menu's third page: which parts play */
-        static const uint8_t ROW[4] = {L_K1, L_K2, L_K3, L_K4};
-        unsigned k;
-        line(L_SOUND, ork_set.parts_on ? "PARTS ON" : "PARTS OFF", ork_set.parts_on ? ACCENT : DIM);
-        p = b;
-        for (k = 0; k < 4u; k++) {                  /* the combination: 1 2 - 4 */
-            if (k)
-                *p++ = ' ';
-            *p++ = (ork_set.part_mask >> k & 1u) && ork_set.part_patch[k] ? (char)('1' + k) : '-';
-        }
-        *p = 0;
-        line(L_NOTE, ork_set.parts_on ? b : "ARP PLAYS ITS PHRASE", ork_set.parts_on ? TEXT : DIM);
-        for (k = 0; k < 4u; k++) {
-            unsigned pp = ork_set.part_patch[k], on = ork_set.part_mask >> k & 1u;
-            p = put_int(v, (int)k + 1);
-            p = put_str(p, " ");
-            put_str(p, !pp ? "NO SOUND" : pp <= ork_bank.np ? ork_bank.patch[pp - 1u].name : "?");
-            knob_row(ROW[k], v, on ? "ON" : "OFF", on && pp ? TEXT : DIM);
-        }
-    } else if (arp_menu == 2u) {                    /* the ARP menu's second page: velocity, apart from the phrase */
-        unsigned vp = ork_set.velo_pat % ORK_NVELO, k, n = VELO[vp].n;
-        line(L_SOUND, "VELOCITY", ork_set.arp_on ? ACCENT : DIM);
+    } else if (arp_menu == 2u || arp_menu == 4u) {   /* a part's velocity page */
+        const struct ork_part *pt = (const struct ork_part *)&ork_set.part[arp_menu / 3u];
+        unsigned vp = pt->velo % ORK_NVELO, k, n = VELO[vp].n;
+        line(L_SOUND, arp_menu == 2u ? "VELOCITY 1" : "VELOCITY 2", ork_set.arp_on ? ACCENT : DIM);
         p = b;
         if (!vp)
             p = put_str(p, "AS THE PHRASE");
@@ -548,57 +487,32 @@ static void draw(uint32_t now)
             }
         *p = 0;
         line(L_NOTE, b, TEXT);
-        knob_row(L_K1, "K1 PATTERN", VELO_NAME[vp], TEXT);
-        put_str(put_int(v, ork_set.velo_depth), " %");
+        knob_row(L_K1, "K1", VELO_NAME[vp], TEXT);
+        put_str(put_int(v, pt->depth), " %");
         knob_row(L_K2, "K2 DEPTH", v, TEXT);
-        put_str(put_int(v, ork_set.velo_human), " %");
+        put_str(put_int(v, pt->human), " %");
         knob_row(L_K3, "K3 HUMANIZE", v, TEXT);
-        knob_row(L_K4, "K4 STEPS", ork_set.velo_reset ? "LOOP" : "FREE", TEXT);
-    } else if (arp_menu) {                          /* the ARP menu: the phrase a key plays */
-        static const char *const SPEED[3] = {"1/2 X", "1 X", "2 X"}, *const MODE[3] = {"HOLD", "ONCE", "LATCH"};
-        unsigned ph = ork_set.arp_phrase % ORK_NPHRASE;
-        line(L_SOUND, PHRASE_NAME[ph][0], ork_set.arp_on ? ACCENT : DIM);
-        line(L_NOTE, PHRASE_NAME[ph][1], TEXT);
+        put_str(put_int(v, pt->gate), " %");
+        knob_row(L_K4, "K4 GATE", v, TEXT);
+    } else if (arp_menu) {                          /* a part's page: its sound, phrase, speed, octave */
+        static const char *const SPEED[3] = {"1/2 X", "1 X", "2 X"};
+        unsigned pi = arp_menu / 3u;
+        const struct ork_part *pt = (const struct ork_part *)&ork_set.part[pi];
+        int off = pt->patch >= ork_bank.np;
+        unsigned ph = pt->phrase % ORK_NPHRASE;
+        line(L_SOUND, off ? "PART 2 OFF" : PHRASE_NAME[ph][0], ork_set.arp_on && !off ? ACCENT : DIM);
+        line(L_NOTE, pi ? "PART 2" : "PART 1", TEXT);
+        knob_row(L_K1, "K1", off ? "OFF" : ork_bank.patch[pt->patch].name, TEXT);
         p = put_int(v, (int)ph + 1);
         p = put_str(p, "/");
         put_int(p, ORK_NPHRASE);
-        knob_row(L_K1, "K1 PHRASE", v, TEXT);
-        knob_row(L_K2, "K2 SPEED", SPEED[ork_set.arp_speed % 3u], TEXT);
-        put_str(put_int(v, ork_set.arp_gate), " %");
-        knob_row(L_K3, "K3 GATE", v, TEXT);
-        knob_row(L_K4, "K4 MODE", MODE[ork_set.arp_mode % 3u], TEXT);
-    } else if (scale_menu == 2u) {                  /* the SEQ menu's PARTS: four sounds, each its phrase */
-        static const char *const FIELD[5] = {"SOUND", "PHRASE", "VELOCITY", "OCTAVE", "CALL RESP"};
-        static const uint8_t ROW[4] = {L_K1, L_K2, L_K3, L_K4};
-        static const char *const KN[4] = {"1", "2", "3", "4"};
-        unsigned k;
-        line(L_SOUND, ork_set.parts_on ? "PARTS ON" : "PARTS OFF", ork_set.parts_on ? ACCENT : DIM);
-        p = put_str(b, "< ");
-        p = put_str(p, FIELD[part_field % 5u]);
-        put_str(p, " >");
-        line(L_NOTE, b, TEXT);
-        if (part_field == 4u) {                     /* call and response: parts 1 + 2, then 3 + 4, a turn each */
-            knob_row(L_K1, "K1 CALL RESP", ork_set.cr_on ? "ON" : "OFF", TEXT);
-            knob_row(L_K2, "K2 TURN", CR_NAME[ork_set.cr_len % ORK_NCR], TEXT);
-            knob_row(L_K3, "CALL", "PARTS 1 2", DIM);
-            knob_row(L_K4, "RESPONSE", "PARTS 3 4", DIM);
-        } else
-        for (k = 0; k < 4u; k++) {
-            const char *val;
-            unsigned pp = ork_set.part_patch[k];
-            switch (part_field % 5u) {
-            case 0: val = !pp ? "OFF" : pp <= ork_bank.np ? ork_bank.patch[pp - 1u].name : "?"; break;
-            case 1: val = PHRASE_NAME[ork_set.part_phrase[k] % ORK_NPHRASE][0]; break;
-            case 2: val = VELO_NAME[ork_set.part_velo[k] % ORK_NVELO]; break;
-            default:
-                p = v;
-                if (ork_set.part_oct[k] > 0)
-                    p = put_str(p, "+");
-                put_int(p, ork_set.part_oct[k]);
-                val = v;
-            }
-            knob_row(ROW[k], KN[k], val, pp ? TEXT : DIM);
-        }
+        knob_row(L_K2, "K2 PHRASE", v, TEXT);
+        knob_row(L_K3, "K3 SPEED", SPEED[pt->speed % 3u], TEXT);
+        p = v;
+        if (pt->oct > 0)
+            p = put_str(p, "+");
+        put_int(p, pt->oct);
+        knob_row(L_K4, "K4 OCTAVE", v, TEXT);
     } else if (scale_menu) {                        /* the SEQ menu: the scale ARP keeps to */
         static const char *const NOTE[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
         unsigned sc = ork_set.scale % ORK_NSCALE, rt = ork_set.scale_root % 12u, k;
@@ -689,7 +603,7 @@ static void draw(uint32_t now)
         knob_row(L_K4, "K4 ROOM", v, TEXT);
     }
     line(L_EVENT, (int32_t)(now - event_until) < 0 ? event : lfo_menu ? "SELECT SYNC  ALGO BPM  LFO BACK"
-         : pan_menu ? "GLO OR HOME BACK" : env_menu ? "ENV OR HOME BACK" : arp_menu ? arp_hint() : scale_menu == 2u ? "SELECT ON OFF  ALGO FIELD  SEQ BACK"
+         : pan_menu ? "GLO OR HOME BACK" : env_menu ? "ENV OR HOME BACK" : arp_menu ? arp_hint()
          : scale_menu ? "THE ARP KEEPS TO IT   SCL BACK" : "",
          (int32_t)(now - event_until) < 0 ? AMBER : DIM);
     p = put_str(b, "VOICES ");
@@ -765,17 +679,16 @@ void groove_screen_control(void)
             octave = octave < -3 ? -3 : octave > 3 ? 3 : octave;
         } else if (k == B_SAVE)
             say(settings_save() == 0 ? "SAVED" : "SAVE FAILED", now);
-        else if (k == B_LFO || k == B_ENV || k == B_ARP || k == B_SEQ || k == B_SCL || k == B_GLO ||
+        else if (k == B_LFO || k == B_ENV || k == B_ARP || k == B_SCL || k == B_GLO ||
                  (k == B_HOME && (lfo_menu || env_menu || arp_menu || scale_menu || pan_menu))) {
             pan_menu = k == B_GLO ? !pan_menu : 0;
             lfo_menu = k == B_LFO ? !lfo_menu : 0;
             env_menu = k == B_ENV ? !env_menu : 0;
-            arp_menu = k == B_ARP ? (uint8_t)((arp_menu + 1u) % 4u) : 0;   /* ARP: phrase, velocity, parts, closed */
+            arp_menu = k == B_ARP ? (uint8_t)((arp_menu + 1u) % 5u) : 0;   /* ARP: part 1, its velocity, part 2, its velocity, closed */
             if (k == B_ARP && arp_menu == 1u)
                 ork_set.arp_on = 1;                 /* opening the ARP menu turns ARP on (SELECT turns it off) */
-            scale_menu = k == B_SCL ? (scale_menu == 1u ? 0u : 1u)       /* SCL: the scale */
-                       : k == B_SEQ ? (scale_menu == 2u ? 0u : 2u) : 0u;   /* SEQ: the parts */
-            if (scale_menu != 1u && scale_dirty) {
+            scale_menu = k == B_SCL ? !scale_menu : 0;   /* SCL: the scale */
+            if (!scale_menu && scale_dirty) {
                 scale_dirty = 0;
                 (void)scale_store();
             }
@@ -808,96 +721,55 @@ void groove_screen_control(void)
                 *t[k] = (uint8_t)(v < 0 ? 0 : v > 127 ? 127 : v);
             }
         lfo_apply();
-    } else if (arp_menu == 3u) {                    /* parts: SELECT PARTS on/off, K1..K4 each part on/off */
-        int e[4] = {c.encoders[E_K1], c.encoders[E_K2], c.encoders[E_K3], c.encoders[E_K4]};
-        if (c.encoders[E_SELECT])
-            ork_set.parts_on = c.encoders[E_SELECT] > 0;
-        for (k = 0; k < 4u; k++)
-            if (e[k])
-                ork_set.part_mask = (uint8_t)(e[k] > 0 ? ork_set.part_mask | 1u << k : ork_set.part_mask & ~(1u << k));
-    } else if (arp_menu == 2u) {
-        int v;
-        if (c.encoders[E_SELECT])                   /* SELECT: on / off, as on the first page */
-            ork_set.arp_on = c.encoders[E_SELECT] > 0;
-        if (c.encoders[E_ALGO]) {
-            v = (int)bpm + c.encoders[E_ALGO];
-            bpm = (uint16_t)(v < 40 ? 40 : v > 300 ? 300 : v);
-            lfo_apply();
-        }
-        if (c.encoders[E_K1] || c.encoders[E_PRESETS]) {
-            v = (int)ork_set.velo_pat + c.encoders[E_K1] + c.encoders[E_PRESETS];
-            ork_set.velo_pat = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NVELO ? (int)ORK_NVELO - 1 : v);
-        }
-        if (c.encoders[E_K2]) {
-            v = (int)ork_set.velo_depth + c.encoders[E_K2] * 5;
-            ork_set.velo_depth = (uint8_t)(v < 0 ? 0 : v > 100 ? 100 : v);
-        }
-        if (c.encoders[E_K3]) {
-            v = (int)ork_set.velo_human + c.encoders[E_K3] * 5;
-            ork_set.velo_human = (uint8_t)(v < 0 ? 0 : v > 100 ? 100 : v);
-        }
-        if (c.encoders[E_K4])
-            ork_set.velo_reset = c.encoders[E_K4] > 0;
-    } else if (arp_menu) {
-        int v;
-        if (c.encoders[E_SELECT])                   /* SELECT: on / off */
-            ork_set.arp_on = c.encoders[E_SELECT] > 0;
-        if (c.encoders[E_ALGO]) {                   /* ALGORITHM: the internal tempo (shared with the LFO) */
-            v = (int)bpm + c.encoders[E_ALGO];
-            bpm = (uint16_t)(v < 40 ? 40 : v > 300 ? 300 : v);
-            lfo_apply();
-        }
-        if (c.encoders[E_K1] || c.encoders[E_PRESETS]) {
-            v = (int)ork_set.arp_phrase + c.encoders[E_K1] + c.encoders[E_PRESETS];
-            ork_set.arp_phrase = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NPHRASE ? (int)ORK_NPHRASE - 1 : v);
-        }
-        if (c.encoders[E_K2]) {
-            v = (int)ork_set.arp_speed + (c.encoders[E_K2] > 0 ? 1 : -1);
-            ork_set.arp_speed = (uint8_t)(v < 0 ? 0 : v > 2 ? 2 : v);
-        }
-        if (c.encoders[E_K3]) {
-            v = (int)ork_set.arp_gate + c.encoders[E_K3];
-            ork_set.arp_gate = (uint8_t)(v < 10 ? 10 : v > 100 ? 100 : v);
-        }
-        if (c.encoders[E_K4]) {
-            v = (int)ork_set.arp_mode + (c.encoders[E_K4] > 0 ? 1 : -1);
-            ork_set.arp_mode = (uint8_t)(v < 0 ? 0 : v > 2 ? 2 : v);
-        }
-    } else if (scale_menu == 2u) {                  /* PARTS: SELECT on/off, ALGO the field, K1..K4 the parts */
+    } else if (arp_menu) {                          /* the ARP pages: SELECT on/off, ALGO tempo, PRESETS mode */
+        struct ork_part *pt = (struct ork_part *)&ork_set.part[arp_menu >= 3u];
         int v, e[4] = {c.encoders[E_K1], c.encoders[E_K2], c.encoders[E_K3], c.encoders[E_K4]};
         if (c.encoders[E_SELECT])
-            ork_set.parts_on = c.encoders[E_SELECT] > 0;
+            ork_set.arp_on = c.encoders[E_SELECT] > 0;
         if (c.encoders[E_ALGO]) {
-            v = ((int)part_field + (c.encoders[E_ALGO] > 0 ? 1 : 4)) % 5;
-            part_field = (uint8_t)v;
+            v = (int)bpm + c.encoders[E_ALGO];
+            bpm = (uint16_t)(v < 40 ? 40 : v > 300 ? 300 : v);
+            lfo_apply();
         }
-        if (part_field == 4u) {                     /* call and response: K1 on/off, K2 the turn */
-            if (e[0])
-                ork_set.cr_on = e[0] > 0;
-            if (e[1]) {
-                v = (int)ork_set.cr_len + (e[1] > 0 ? 1 : -1);
-                ork_set.cr_len = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NCR ? (int)ORK_NCR - 1 : v);
+        if (c.encoders[E_PRESETS]) {
+            v = (int)ork_set.arp_mode + (c.encoders[E_PRESETS] > 0 ? 1 : -1);
+            ork_set.arp_mode = (uint8_t)(v < 0 ? 0 : v > 2 ? 2 : v);
+        }
+        if (arp_menu == 2u || arp_menu == 4u) {     /* velocity: pattern, depth, humanize, gate */
+            if (e[0]) {
+                v = (int)pt->velo + e[0];
+                pt->velo = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NVELO ? (int)ORK_NVELO - 1 : v);
             }
-        } else
-        for (k = 0; k < 4u; k++) {
-            if (!e[k])
-                continue;
-            switch (part_field % 5u) {
-            case 0:
-                v = (int)ork_set.part_patch[k] + e[k];
-                ork_set.part_patch[k] = (uint8_t)(v < 0 ? 0 : v > (int)ork_bank.np ? (int)ork_bank.np : v);
-                break;
-            case 1:
-                v = (int)ork_set.part_phrase[k] + e[k];
-                ork_set.part_phrase[k] = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NPHRASE ? (int)ORK_NPHRASE - 1 : v);
-                break;
-            case 2:
-                v = (int)ork_set.part_velo[k] + e[k];
-                ork_set.part_velo[k] = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NVELO ? (int)ORK_NVELO - 1 : v);
-                break;
-            default:
-                v = (int)ork_set.part_oct[k] + (e[k] > 0 ? 1 : -1);
-                ork_set.part_oct[k] = (int8_t)(v < -2 ? -2 : v > 2 ? 2 : v);
+            if (e[1]) {
+                v = (int)pt->depth + e[1] * 5;
+                pt->depth = (uint8_t)(v < 0 ? 0 : v > 100 ? 100 : v);
+            }
+            if (e[2]) {
+                v = (int)pt->human + e[2] * 5;
+                pt->human = (uint8_t)(v < 0 ? 0 : v > 100 ? 100 : v);
+            }
+            if (e[3]) {
+                v = (int)pt->gate + e[3];
+                pt->gate = (uint8_t)(v < 10 ? 10 : v > 100 ? 100 : v);
+            }
+        } else {                                    /* the part: sound (part 2 also OFF), phrase, speed, octave */
+            if (e[0]) {
+                int lo = arp_menu >= 3u ? -1 : 0, cur = pt->patch >= ork_bank.np ? -1 : (int)pt->patch;
+                v = cur + e[0];
+                v = v < lo ? lo : v >= (int)ork_bank.np ? (int)ork_bank.np - 1 : v;
+                pt->patch = (uint8_t)(v < 0 ? 255 : v);
+            }
+            if (e[1]) {
+                v = (int)pt->phrase + e[1];
+                pt->phrase = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NPHRASE ? (int)ORK_NPHRASE - 1 : v);
+            }
+            if (e[2]) {
+                v = (int)pt->speed + (e[2] > 0 ? 1 : -1);
+                pt->speed = (uint8_t)(v < 0 ? 0 : v > 2 ? 2 : v);
+            }
+            if (e[3]) {
+                v = (int)pt->oct + (e[3] > 0 ? 1 : -1);
+                pt->oct = (int8_t)(v < -2 ? -2 : v > 2 ? 2 : v);
             }
         }
     } else if (scale_menu) {

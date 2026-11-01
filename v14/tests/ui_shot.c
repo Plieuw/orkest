@@ -65,12 +65,20 @@ int main(void){
   ctl.buttons = 1u << 4; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* ENV again: back */
   ctl.encoders[4] = 5; groove_screen_control(); ctl.encoders[4] = 0;
   if (ork_set.transient != 84) { printf("screen test FAIL: ENV closes its menu\n"); return 1; }
-  ctl.buttons = 1u << 10; groove_screen_control(); ctl.buttons = 0;   /* ARP: its menu; SELECT on, K1 +12, K4 LATCH */
-  ctl.encoders[0] = 1; ctl.encoders[2] = 12; ctl.encoders[5] = 1; groove_screen_control();
-  ctl.encoders[0] = ctl.encoders[2] = 0; ctl.encoders[5] = 1; groove_screen_control(); ctl.encoders[5] = 0;   /* K4 twice: LATCH */
+  ctl.buttons = 1u << 10; groove_screen_control(); ctl.buttons = 0;   /* ARP: part 1 (on); K1 sound +1, K2 phrase +12, PRESETS: LATCH */
+  ctl.encoders[2] = 1; ctl.encoders[3] = 12; ctl.encoders[6] = 1; groove_screen_control();
+  ctl.encoders[2] = ctl.encoders[3] = 0; ctl.encoders[6] = 1; groove_screen_control(); ctl.encoders[6] = 0;
   for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-arp.rgb565");
-  if (!ork_set.arp_on || ork_set.arp_phrase != 12 || ork_set.arp_mode != 2 || ork_set.patch != 10) {
-    printf("screen test FAIL: ARP menu (%d %d %d %d)\n", ork_set.arp_on, ork_set.arp_phrase, ork_set.arp_mode, ork_set.patch); return 1; }
+  if (!ork_set.arp_on || ork_set.part[0].phrase != 12 || ork_set.part[0].patch != 1 || ork_set.arp_mode != 2 || ork_set.patch != 10) {
+    printf("screen test FAIL: ARP part 1 (%d %d %d %d)\n", ork_set.arp_on, ork_set.part[0].phrase, ork_set.arp_mode, ork_set.patch); return 1; }
+  ctl.buttons = 1u << 10; groove_screen_control(); ctl.buttons = 0;   /* ARP: part 1's velocity: K1 pattern +3, K4 gate -10 */
+  ctl.encoders[2] = 3; ctl.encoders[5] = -10; groove_screen_control(); ctl.encoders[2] = ctl.encoders[5] = 0;
+  for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-arp-velo.rgb565");
+  ctl.buttons = 1u << 10; groove_screen_control(); ctl.buttons = 0;   /* ARP: part 2 (off): K1 +4 -> the 4th sound */
+  ctl.encoders[2] = 4; groove_screen_control(); ctl.encoders[2] = 0;
+  for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-arp-part2.rgb565");
+  if (ork_set.part[0].velo != 3 || ork_set.part[0].gate != 80 || ork_set.part[1].patch != 3) {
+    printf("screen test FAIL: ARP pages (%d %d %d)\n", ork_set.part[0].velo, ork_set.part[0].gate, ork_set.part[1].patch); return 1; }
   ctl.buttons = 1u << 8; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* HOME: back, ARP stays on */
   ork_stat.last_note = 69;
   for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-main-arp.rgb565");
@@ -78,16 +86,11 @@ int main(void){
   ctl.buttons = 1u << 3; groove_screen_control(); ctl.buttons = 0;    /* SCL: K1 root A (-3), K2 MINOR, no SAVE */
   ctl.encoders[2] = -3; ctl.encoders[3] = 2; groove_screen_control(); ctl.encoders[2] = ctl.encoders[3] = 0;
   for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-scale.rgb565");
-  ctl.buttons = 1u << 11; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* SEQ: to PARTS, the scale kept */
+  ctl.buttons = 1u << 3; groove_screen_control(); ctl.buttons = 0; groove_screen_control();    /* SCL again: closed, the scale kept */
   ork_set.scale = 0; ork_set.scale_root = 0;
   groove_screen_init();                                                 /* a power cycle */
   if (ork_set.scale != 2 || ork_set.scale_root != 9) { printf("screen test FAIL: scale kept (%d %d)\n", ork_set.scale, ork_set.scale_root); return 1; }
-  /* (the SEQ menu is on its PARTS page now) ALGO: the PHRASE field; K2 +1; SELECT on */
-  ctl.encoders[1] = 1; ctl.encoders[3] = 1; ctl.encoders[0] = 1; groove_screen_control();
-  ctl.encoders[1] = ctl.encoders[3] = ctl.encoders[0] = 0;
-  for(int i=0;i<40;i++)groove_screen_control(); save("build/host/screen-parts.rgb565");
-  if (!ork_set.parts_on || ork_set.part_phrase[1] != 52) { printf("screen test FAIL: PARTS (%d %d)\n", ork_set.parts_on, ork_set.part_phrase[1]); return 1; }
-  ctl.buttons = 1u << 7; groove_screen_control(); ctl.buttons = 0;    /* GLO: panning; K1 -6 (spread 70 %) */
+ctl.buttons = 1u << 7; groove_screen_control(); ctl.buttons = 0;    /* GLO: panning; K1 -6 (spread 70 %) */
   ctl.encoders[2] = -6; groove_screen_control(); ctl.encoders[2] = 0;
   for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-pan.rgb565");
   if (ork_set.pan_spread != 70 || ork_set.pan_mode) { printf("screen test FAIL: GLO (%d)\n", ork_set.pan_spread); return 1; }

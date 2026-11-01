@@ -67,8 +67,8 @@ static FM1_AUDIO_DATA const uint16_t TONE[128] = {
 static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
-struct ork_settings ork_set = {0, 8, 6, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64, 0, 0, 1, 90, 0, 0, 0, 0, 100, 0, 0,
-                               0, {4, 2, 13, 0}, {48, 51, 39, 0}, {4, 17, 0, 0}, {-1, 0, 1, 0}, 15, 0, 3, 0, 100, 9131};
+struct ork_settings ork_set = {0, 8, 6, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64, 0, 0, 0, 0,
+                               {{0, 0, 1, 90, 0, 0, 100, 0}, {255, 39, 1, 90, 1, 0, 100, 0}}, 0, 100, 9131};
 struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0};
 
 /* ------------------------------------------------------------ events --- */
@@ -419,41 +419,38 @@ static FM1_AUDIO_CODE int32_t scale_snap(int32_t n)
 #include "orkest_velo.inc"
 _Static_assert(sizeof VELO_STEP == 132, "velocity patterns: VELO's offsets");
 static uint32_t velo_rng = 0x2545F491u;
-/* the velocity of the phrase's next note: the key's, shaped by the phrase or the chosen pattern (its next step) */
-static FM1_AUDIO_CODE uint32_t phrase_vel(uint32_t key_vel, uint32_t own, uint32_t pat, uint16_t *step)
+/* the velocity of the phrase's next note: the key's, shaped by the phrase or the part's pattern (its next step) */
+static FM1_AUDIO_CODE uint32_t phrase_vel(uint32_t key_vel, uint32_t own, const struct ork_part *pt, uint16_t *step)
 {
-    pat = pat < ORK_NVELO ? pat : 0u;
+    uint32_t pat = pt->velo < ORK_NVELO ? pt->velo : 0u;
     int32_t v = (int32_t)own;
     if (pat) {
         v = VELO_STEP[VELO[pat].first + *step % VELO[pat].n];
         *step = (uint16_t)((*step + 1u) % (VELO[pat].n * 16u));   /* (a multiple of every length: no jump) */
     }
-    v = 100 + (v - 100) * (int32_t)(ork_set.velo_depth > 100u ? 100u : ork_set.velo_depth) / 100;
-    if (ork_set.velo_human) {                    /* humanize: +- up to 30 */
-        int32_t span = (int32_t)(ork_set.velo_human > 100u ? 100u : ork_set.velo_human) * 30 / 100;
+    v = 100 + (v - 100) * (int32_t)(pt->depth > 100u ? 100u : pt->depth) / 100;
+    if (pt->human) {                             /* humanize: +- up to 30 */
+        int32_t span = (int32_t)(pt->human > 100u ? 100u : pt->human) * 30 / 100;
         velo_rng = velo_rng * 1664525u + 1013904223u;
         v += (int32_t)((velo_rng >> 16) % (uint32_t)(2 * span + 1)) - span;
     }
     v = (int32_t)key_vel * v / 100;
     return v < 1 ? 1u : v > 127 ? 127u : (uint32_t)v;
 }
-#define NRUN 4                                   /* one key: ARP's own phrase, or up to 4 parts */
+#define NRUN 2                                   /* one key at a time, its two parts */
 #define RUN_NOTES 1
 typedef struct {
-    uint8_t key, vel, on, stop;                  /* stop: let go (HOLD), it ends; ONCE: it ends at its end */
-    uint8_t part;                                /* 255: ARP's own phrase and sound; else the SEQ part 0..3 */
-    uint8_t patch, phrase, velo;                 /* what it plays */
+    uint8_t key, vel, on;
+    uint8_t patch, phrase;                       /* what it plays (taken at the key) */
     int8_t shift;                                /* its octave, semitones */
     int16_t prev;                                /* the note it played last (a slide's start), -1 none */
-    uint32_t age;                                /* when it started (the oldest gives way when all are busy) */
     uint16_t idx;                                /* the next note in the phrase */
     uint16_t vstep;                              /* the velocity pattern's next step */
     uint32_t pos;                                /* ticks into the phrase, Q16 */
-    uint8_t nn, note[RUN_NOTES];                 /* its notes sounding, the ticks (Q16) each has left */
+    uint8_t nn, note[RUN_NOTES];                 /* its note sounding, the ticks (Q16) it has left */
     int32_t left[RUN_NOTES];
 } run_t;
 static run_t run[NRUN];
-static uint8_t run_phrase;                       /* the phrase the runners play (a change restarts them) */
 static FM1_AUDIO_CODE void run_quiet(run_t *r)  /* its notes off */
 {
     while (r->nn) {
@@ -466,53 +463,27 @@ static FM1_AUDIO_CODE void run_end(run_t *r)
     run_quiet(r);
     r->on = 0;
 }
-static uint32_t run_clock;
-/* part: 255 ARP's own phrase (its runner 0), else the SEQ part (runner = part) */
-static FM1_AUDIO_CODE void run_start(uint32_t key, uint32_t vel, uint32_t part)
-{
-    run_t *r = &run[part < 4u ? part : 0u];
-    run_quiet(r);
-    r->age = ++run_clock;
-    r->key = (uint8_t)key;
-    r->vel = (uint8_t)vel;
-    r->on = 1;
-    r->stop = 0;
-    r->idx = 0;
-    r->pos = 0;
-    r->vstep = 0;
-    r->prev = -1;
-    r->part = (uint8_t)part;
-    if (part < 4u) {
-        r->patch = (uint8_t)(ork_set.part_patch[part] - 1u);
-        r->phrase = ork_set.part_phrase[part];
-        r->velo = ork_set.part_velo[part];
-        r->shift = (int8_t)(12 * ork_set.part_oct[part]);
-    } else {
-        r->patch = ork_set.patch;
-        r->phrase = ork_set.arp_phrase;
-        r->velo = ork_set.velo_pat;
-        r->shift = 0;
-    }
-}
-/* a key (the newest wins: what played ends): ARP's phrase, or each part chosen that has a sound */
-static FM1_AUDIO_DATA const uint16_t CR_TICKS[ORK_NCR] = ORK_CR_TICKS_INIT;
-static uint32_t cr_pos;                          /* call and response: ticks (Q16) since the key, the turn playing */
-static uint8_t cr_turn;
+/* a key (the newest wins: what played ends): part 1, and part 2 when it has a sound */
 static FM1_AUDIO_CODE void runs_start(uint32_t key, uint32_t vel)
 {
     uint32_t p;
-    cr_pos = 0;                                  /* the call first */
-    cr_turn = 0;
-    for (p = 0; p < NRUN; p++)
-        if (run[p].on)
-            run_end(&run[p]);
-    if (!ork_set.parts_on) {
-        run_start(key, vel, 255u);
-        return;
+    for (p = 0; p < NRUN; p++) {
+        const struct ork_part *pt = &ork_set.part[p];
+        run_t *r = &run[p];
+        run_end(r);
+        if (pt->patch >= ork_bank.np || pt->phrase >= ORK_NPHRASE)
+            continue;                            /* (part 2 off) */
+        r->key = (uint8_t)key;
+        r->vel = (uint8_t)vel;
+        r->on = 1;
+        r->idx = 0;
+        r->pos = 0;
+        r->vstep = 0;
+        r->prev = -1;
+        r->patch = pt->patch;
+        r->phrase = pt->phrase;
+        r->shift = (int8_t)(12 * (pt->oct < -2 ? -2 : pt->oct > 2 ? 2 : pt->oct));
     }
-    for (p = 0; p < 4u; p++)
-        if ((ork_set.part_mask >> p & 1u) && ork_set.part_patch[p] && ork_set.part_patch[p] <= ork_bank.np)
-            run_start(key, vel, p);
 }
 static FM1_AUDIO_CODE void run_release(uint32_t key)   /* its key let go: HOLD stops, ONCE and LATCH play on */
 {
@@ -521,61 +492,38 @@ static FM1_AUDIO_CODE void run_release(uint32_t key)   /* its key let go: HOLD s
         if (run[i].on && run[i].key == key && ork_set.arp_mode == 0u)
             run_end(&run[i]);
 }
-static uint8_t arp_was, parts_was;
-static FM1_AUDIO_CODE void phrases_sync(void)   /* before the block's events: ARP off or another phrase, it ends */
+static uint8_t arp_was, phrase_was[NRUN] = {255, 255}, patch_was[NRUN] = {255, 255};
+static FM1_AUDIO_CODE void phrases_sync(void)   /* before the block's events: ARP off, or a part changed, it ends */
 {
     uint32_t i;
-    if (ork_set.arp_on != arp_was || ork_set.parts_on != parts_was) {   /* ARP or PARTS on or off: what sounds ends */
+    if (ork_set.arp_on != arp_was) {             /* ARP on or off: what sounds ends (keys held go silent) */
         arp_was = ork_set.arp_on;
-        parts_was = ork_set.parts_on;
         for (i = 0; i < 128u; i++)
             held[i] = 0;
         for (i = 0; i < NRUN; i++)
             run[i].on = run[i].nn = 0;
         all_off();
     }
-    if (!ork_set.arp_on || ork_set.arp_phrase != run_phrase) {   /* (another phrase: ARP's own runs end) */
-        for (i = 0; i < NRUN; i++)
-            if (run[i].on && (!ork_set.arp_on || run[i].part == 255u))
+    for (i = 0; i < NRUN; i++)                   /* another phrase or sound for a part: it stops (the next key) */
+        if (ork_set.part[i].phrase != phrase_was[i] || ork_set.part[i].patch != patch_was[i]) {
+            phrase_was[i] = ork_set.part[i].phrase;
+            patch_was[i] = ork_set.part[i].patch;
+            if (run[i].on)
                 run_end(&run[i]);
-        run_phrase = ork_set.arp_phrase;
-    }
+        }
 }
 static FM1_AUDIO_CODE void phrases(void)
 {
-    uint32_t i, k, inc, beat_inc;
-    int cr;
+    uint32_t i, k, beat_inc;
     const ork_phrase_t *ph;
     if (!ork_set.arp_on)
         return;
     /* ticks this block: from MIDI clock while it runs (2^31 / its tick length in samples Q8), else the tempo */
     beat_inc = ork_stat.clock && clk_len_q8 ? 2147483648u / clk_len_q8 : ork_set.arp_inc;
-    inc = ork_set.arp_speed == 0u ? beat_inc >> 1 : ork_set.arp_speed == 2u ? beat_inc << 1 : beat_inc;
-    cr = ork_set.cr_on && ork_set.parts_on;
-    if (cr) {                                    /* call and response: whose turn (in beats, whatever the speed) */
-        uint32_t turn = (cr_pos / CR_TICKS[ork_set.cr_len < ORK_NCR ? ork_set.cr_len : 3u] >> 16) & 1u;
-        if (turn != cr_turn) {                   /* a new turn: its parts from their phrases' start, the others end */
-            cr_turn = (uint8_t)turn;
-            for (i = 0; i < NRUN; i++)
-                if (run[i].on && run[i].part < 4u) {
-                    if ((run[i].part >> 1) == turn) {
-                        run[i].pos = 0;
-                        run[i].idx = 0;
-                        if (ork_set.velo_reset)
-                            run[i].vstep = 0;
-                    } else
-                        run_quiet(&run[i]);
-                }
-        }
-        cr_pos += beat_inc;
-        {   /* (round two turns: no wrap of the count) */
-            uint32_t two = (uint32_t)CR_TICKS[ork_set.cr_len < ORK_NCR ? ork_set.cr_len : 3u] << 17;
-            if (cr_pos >= two)
-                cr_pos -= two;
-        }
-    }
     for (i = 0; i < NRUN; i++) {
         run_t *r = &run[i];
+        const struct ork_part *pt = &ork_set.part[i];
+        uint32_t inc = pt->speed == 0u ? beat_inc >> 1 : pt->speed == 2u ? beat_inc << 1 : beat_inc;
         if (!r->on)
             continue;
         if (r->phrase >= ORK_NPHRASE) {
@@ -583,8 +531,6 @@ static FM1_AUDIO_CODE void phrases(void)
             continue;
         }
         ph = &PHRASE[r->phrase];
-        if (cr && r->part < 4u && (r->part >> 1) != cr_turn)
-            continue;                            /* not its turn: waits */
         for (k = 0; k < r->nn;)                  /* notes whose time is up */
             if (r->left[k] <= 0) {
                 note_off_src(r->note[k], i + 1u);
@@ -602,25 +548,24 @@ static FM1_AUDIO_CODE void phrases(void)
                 }
                 r->pos -= (uint32_t)ph->len << 16;
                 r->idx = 0;
-                if (ork_set.velo_reset)
-                    r->vstep = 0;
             }
             if (r->idx >= ph->n || ((uint32_t)PEV[ph->first + r->idx].at << 16) > r->pos)
                 break;
             {
                 const ork_pev_t *e = &PEV[ph->first + r->idx++];
                 int32_t n = scale_snap((int32_t)r->key + r->shift + e->iv);
+                uint32_t gate = pt->gate < 10u ? 10u : pt->gate > 100u ? 100u : pt->gate;
                 if (n < 0 || n > 127)
                     continue;
                 run_quiet(r);                    /* one note at a time */
                 {   /* a slide: over half the note (in blocks at this tempo), at least ~12 ms */
                     uint32_t gl = e->slide && r->prev >= 0 && inc ? ((uint32_t)e->len << 15) / inc : 0u;
-                    note_on_p(r->patch, (uint32_t)n, phrase_vel(r->vel, e->vel, r->velo, &r->vstep), i + 1u,
+                    note_on_p(r->patch, (uint32_t)n, phrase_vel(r->vel, e->vel, pt, &r->vstep), i + 1u,
                               e->slide ? r->prev : -1, gl < 4u && gl ? 4u : gl);
                 }
                 r->prev = (int16_t)n;
                 r->note[r->nn] = (uint8_t)n;
-                r->left[r->nn] = (int32_t)(((uint32_t)e->len * ork_set.arp_gate << 16) / 100u);
+                r->left[r->nn] = (int32_t)(((uint32_t)e->len * gate << 16) / 100u);
                 r->nn++;
             }
         }
