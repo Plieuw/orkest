@@ -41,7 +41,7 @@ typedef struct {
 static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
-struct ork_settings ork_set = {0, 8, 50, 40, 100, 0, 92, 40, 0, 17, 0, 0};
+struct ork_settings ork_set = {0, 8, 50, 40, 100, 0, 92, 0, 0, 17, 0, 0};
 struct ork_status ork_stat = {0, 0xFF, 0, 1};
 
 /* ------------------------------------------------------------ events --- */

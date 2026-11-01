@@ -15,8 +15,7 @@ sequencer worden niet gebruikt.
 | 27 toetsen | spelen de klank, sturen MIDI uit (kanaal 1, USB/Bluetooth) |
 | KNOB 1 of PRESETS | klank kiezen (24); zet attack en release op die van de klank |
 | KNOB 2 / 3 / 4 | attack / release / ROOM (galm) |
-| LFO (kort) | modulatie aan/uit (lampje brandt als hij aan staat) |
-| LFO vasthouden + knoppen | K1 snelheid (0,3–16 Hz), K2 vibrato (tot ±60 cent), K3 tremolo, K4 inloopvertraging (0–3 s) |
+| LFO | LFO-menu open/dicht (ook HOME sluit): K1 snelheid (0,3–16 Hz), K2 vibrato (tot ±60 cent), K3 tremolo, K4 inloopvertraging (0–3 s). De LFO werkt zodra vibrato of tremolo boven 0 staat (lampje aan, "LFO" op het scherm) |
 | MIDI CC 1 (modwiel) | vibrato, ook met de LFO uit |
 | OCT- / OCT+ | octaaf −3..+3 |
 | SAVE | klank, attack, release, room en octaaf bewaren (terug na herstart) |
