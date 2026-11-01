@@ -697,6 +697,8 @@ void groove_screen_control(void)
             lfo_menu = k == B_LFO ? !lfo_menu : 0;
             env_menu = k == B_ENV ? !env_menu : 0;
             arp_menu = k == B_ARP ? (uint8_t)((arp_menu + 1u) % 3u) : 0;   /* ARP: the phrase, its velocity, closed */
+            if (k == B_ARP && arp_menu == 1u)
+                ork_set.arp_on = 1;                 /* opening the ARP menu turns ARP on (SELECT turns it off) */
             scale_menu = k == B_SCL ? (scale_menu == 1u ? 0u : 1u)       /* SCL: the scale */
                        : k == B_SEQ ? (scale_menu == 2u ? 0u : 2u) : 0u;   /* SEQ: the parts */
             if (scale_menu != 1u && scale_dirty) {
