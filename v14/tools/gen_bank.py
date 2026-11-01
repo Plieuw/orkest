@@ -49,9 +49,9 @@ PREROLL = 32                    # the loop's own end before its start: the ADPCM
 TARGET = 7000.0                 # the sustain's RMS (int16)
 
 # V14's patches: as gen_orkest.py's, but MARCATO is one voice: the violins' sustain with the spiccato's transient,
-# and short releases (4..7, 3..10 ms: the recorded release, TAIL, carries the end), in the order of the old ones
+# and very short releases (2..4, 2..4 ms: the recorded release, TAIL, carries the end), in the order of the old ones
 def short_release(r):
-    return max(4, min(7, round(4 + (r - 25) * 3 / 45)))
+    return max(2, min(4, round(2 + (r - 25) * 2 / 45)))
 
 
 PATCHES = [(n, a, short_release(r), [("VIOLINS", 0, 127, 0, 0, 0, "SPICCATO")]) if n == "MARCATO"

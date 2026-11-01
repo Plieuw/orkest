@@ -17,7 +17,7 @@
 #include "orkest.h"
 #include "fm1_block.h"
 
-#define NVOICE 24u
+#define NVOICE 12u
 #define FS FM1_SAMPLE_RATE
 #define ENV_MAX (1u << 30)
 enum { ST_OFF, ST_ATTACK, ST_SUSTAIN, ST_RELEASE };
@@ -67,7 +67,7 @@ static FM1_AUDIO_DATA const uint16_t TONE[128] = {
 static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
-struct ork_settings ork_set = {0, 8, 6, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64, 0, 0, 0, 0,
+struct ork_settings ork_set = {0, 8, 3, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64, 0, 0, 0, 0,
                                {{0, 0, 1, 90, 0, 0, 100, 0}, {255, 39, 1, 90, 1, 0, 100, 0}}, 0, 100, 9131};
 struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0};
 
@@ -229,7 +229,7 @@ static FM1_AUDIO_CODE int can_slide(const char *name)
     }
     return 0;
 }
-#define NPOLY 16                                 /* notes at once; a new one past it ends the oldest */
+#define NPOLY 12                                 /* notes at once (as many as voices); a new one past it ends the oldest */
 static uint32_t note_clock;
 static FM1_AUDIO_CODE void release_voice(voice_t *v, uint32_t time, int tail);
 static FM1_AUDIO_CODE void poly_limit(void)

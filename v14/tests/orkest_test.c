@@ -4,7 +4,7 @@
  *   - the bank: binding, its checks (damaged, uncommitted, not a bank), the decoder against the generator's
  *   - the upload: INFO, BEGIN, DATA in 512-byte chunks, END, as the installer sends them; the flash afterwards;
  *     errors (wrong order, bad checksum, END too early) answered with NAK and nothing committed
- *   - the player: every sound (level, loops hold, one-shots end, release ends), layers, 24 voices at most,
+ *   - the player: every sound (level, loops hold, one-shots end, release ends), layers, 12 voices at most,
  *     notes held by keys and MIDI, all notes off, the room's tail, the stop during a bank rewrite
  *   tests/orkest_test [OUT.wav]   (OUT.wav: every sound in turn, a phrase each) */
 #include <stdint.h>
@@ -320,7 +320,7 @@ int main(int argc, char **argv)
     for (i = 40; i < 80u; i++) note(0x90, (uint8_t)i, 100);
     peak = 0;
     render(800);
-    check("40 notes on TUTTI: 24 voices, the output within 24 bits", ork_stat.voices == 24 && peak < (1 << 23));
+    check("40 notes on TUTTI: 12 voices, the output within 24 bits", ork_stat.voices == 12 && peak < (1 << 23));
     note(0xB0, 123, 0);
     render(4000);
     check("... all released", sounding() == 0);
@@ -542,7 +542,7 @@ int main(int argc, char **argv)
         ork_set.release = 0;
         for (k = 0; k < 20u; k++) { note(0x90, (uint8_t)(50 + k), 100); render(20); }
         render(100);
-        check("20 notes held (FLUTE, one layer): 16 sound, the oldest four ended", ork_stat.voices == 16u);
+        check("20 notes held (FLUTE, one layer): 12 sound, the oldest eight ended", ork_stat.voices == 12u);
         check("... the newest is among them", ork_stat.last_note == 69);
         for (k = 0; k < 20u; k++) note(0x80, (uint8_t)(50 + k), 0);
         render(2000);
