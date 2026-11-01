@@ -16,7 +16,7 @@ sequencer worden niet gebruikt.
 | KNOB 1 of PRESETS | klank kiezen (24); zet attack en release op die van de klank |
 | KNOB 2 / 3 / 4 | attack / release / ROOM (galm) |
 | ENV | ENV-menu open/dicht (ook HOME sluit): K1 attack, K2 release, K3 TRANSIENT (de aanzet; 64 = zoals opgenomen, 127 = harder, 0 = alleen de aanhoudende toon vanaf de eerste sample), K4 TAIL (het opgenomen uitklinken na loslaten; 0 = uit) |
-| ARP | ARP-menu open/dicht (ook HOME sluit): een toets speelt een korte frase (max. 2 maten) vanaf zijn noot. SELECT aan/uit, K1 frase (19: Bach, Pachelbel, Vivaldi, Händel, Mozart, Beethoven, Chopin, Satie), K2 snelheid (½×, 1×, 2×), K3 gate (10–100 %), K4 HOLD (loopt zolang je vasthoudt) / ONCE (één keer) / LATCH (loopt door, een nieuwe toets transponeert), ALGORITHM tempo. Volgt MIDI-clock als die binnenkomt. Meerdere toetsen = meerdere frases tegelijk |
+| ARP | ARP-menu open/dicht (ook HOME sluit): een toets speelt een korte, eenstemmige frase (meestal één maat of minder) vanaf zijn noot; een nieuwe toets neemt het over. SELECT aan/uit, K1 frase (39: Bach, Pachelbel, Vivaldi, Händel, Haydn, Mozart, Beethoven, Paganini, Rossini, Chopin, Verdi, Wagner, Strauss, Brahms, Moessorgski, Bizet, Grieg, Tsjaikovski, Dvořák, Satie), K2 snelheid (½×, 1×, 2×), K3 gate (10–100 %), K4 HOLD / ONCE / LATCH, ALGORITHM tempo. Volgt MIDI-clock als die binnenkomt |
 | LFO | LFO-menu open/dicht (ook HOME sluit): K1 snelheid, K2 vibrato (tot ±60 cent), K3 tremolo, K4 inloopvertraging (0–3 s). De LFO werkt zodra vibrato of tremolo boven 0 staat (lampje aan, "LFO" op het scherm) |
 | in het LFO-menu: SELECT | FREE (K1 in Hz, 0,3–16) of TEMPO (K1 een notenwaarde: 4 maten … 1/32, met punt- en triolen) |
 | in het LFO-menu: ALGORITHM | intern tempo, 40–300 BPM |

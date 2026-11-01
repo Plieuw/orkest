@@ -318,12 +318,13 @@ static FM1_AUDIO_CODE void clock_tick(void)
     clk_age = 0;
 }
 /* ------------------------------------------------------------ phrases --- */
-/* ARP: each key held plays the chosen phrase from its note (up to NRUN at once, each its own place in the phrase).
- * Positions in MIDI clock ticks, Q16; a phrase's notes start on the block they fall in (<= 2.9 ms late). */
+/* ARP: a key plays the chosen phrase from its note. Monophonic: one phrase at a time, one note at a time; a new key
+ * starts it again from its note. Positions in MIDI clock ticks, Q16; a phrase's notes start on the block they fall in
+ * (<= 2.9 ms late). */
 #define ORK_PHRASE_EVENTS
 #include "orkest_phrases.inc"
-#define NRUN 4
-#define RUN_NOTES 8
+#define NRUN 1
+#define RUN_NOTES 1
 typedef struct {
     uint8_t key, vel, on, stop;                  /* stop: let go (HOLD), it ends; ONCE: it ends at its end */
     uint16_t idx;                                /* the next note in the phrase */
@@ -347,21 +348,7 @@ static FM1_AUDIO_CODE void run_end(run_t *r)
 }
 static FM1_AUDIO_CODE void run_start(uint32_t key, uint32_t vel)
 {
-    run_t *r = 0;
-    uint32_t i;
-    if (ork_set.arp_mode == 2u)                  /* LATCH: the new key takes over */
-        for (i = 0; i < NRUN; i++)
-            if (run[i].on)
-                run_end(&run[i]);
-    for (i = 0; i < NRUN && !r; i++)
-        if (!run[i].on || run[i].key == key)
-            r = &run[i];
-    if (!r) {                                    /* all busy: the furthest along gives way */
-        r = &run[0];
-        for (i = 1; i < NRUN; i++)
-            if (run[i].pos > r->pos)
-                r = &run[i];
-    }
+    run_t *r = &run[0];                          /* monophonic: the new key takes over */
     run_quiet(r);
     r->key = (uint8_t)key;
     r->vel = (uint8_t)vel;
@@ -370,24 +357,25 @@ static FM1_AUDIO_CODE void run_start(uint32_t key, uint32_t vel)
     r->idx = 0;
     r->pos = 0;
 }
-static FM1_AUDIO_CODE void run_release(uint32_t key)   /* the key let go: HOLD stops, ONCE and LATCH play on */
+static FM1_AUDIO_CODE void run_release(uint32_t key)   /* its key let go: HOLD stops, ONCE and LATCH play on */
 {
     uint32_t i;
     for (i = 0; i < NRUN; i++)
         if (run[i].on && run[i].key == key && ork_set.arp_mode == 0u)
             run_end(&run[i]);
 }
-static FM1_AUDIO_CODE int run_has(uint32_t key)
-{
-    uint32_t i;
-    for (i = 0; i < NRUN; i++)
-        if (run[i].on && run[i].key == key)
-            return 1;
-    return 0;
-}
+static uint8_t arp_was;
 static FM1_AUDIO_CODE void phrases_sync(void)   /* before the block's events: ARP off or another phrase, it ends */
 {
     uint32_t i;
+    if (ork_set.arp_on != arp_was) {             /* ARP on or off: what sounds ends (keys held go silent) */
+        arp_was = ork_set.arp_on;
+        for (i = 0; i < 128u; i++)
+            held[i] = 0;
+        for (i = 0; i < NRUN; i++)
+            run[i].on = run[i].nn = 0;
+        all_off();
+    }
     if (!ork_set.arp_on || ork_set.arp_phrase != run_phrase) {
         for (i = 0; i < NRUN; i++)
             if (run[i].on)
@@ -434,12 +422,7 @@ static FM1_AUDIO_CODE void phrases(void)
                 int32_t n = (int32_t)r->key + e->iv;
                 if (n < 0 || n > 127)
                     continue;
-                if (r->nn == RUN_NOTES) {        /* full: the oldest goes */
-                    note_off(r->note[0]);
-                    r->nn--;
-                    r->note[0] = r->note[r->nn];
-                    r->left[0] = r->left[r->nn];
-                }
+                run_quiet(r);                    /* one note at a time */
                 note_on((uint32_t)n, r->vel);
                 r->note[r->nn] = (uint8_t)n;
                 r->left[r->nn] = (int32_t)(((uint32_t)e->len * ork_set.arp_gate << 16) / 100u);
@@ -494,7 +477,7 @@ static FM1_AUDIO_CODE void events(void)
                     note_on(d1, d2);
             } else if (st == 0x80u || st == 0x90u) {
                 if (held[d1] && --held[d1] == 0u) {
-                    if (run_has(d1))
+                    if (ork_set.arp_on)             /* ARP: only the key that plays the phrase counts */
                         run_release(d1);
                     else
                         note_off(d1);
