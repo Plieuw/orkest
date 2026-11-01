@@ -100,7 +100,16 @@ struct ork_settings {
     /* the parts' levels: transient (0..127, 64 = as recorded; below, the sustain also takes over the start: 0 = the
      * sustain alone from the first sample), tail = the release sample (0 = none, 64 = as recorded) */
     volatile uint8_t transient, tail;
+    /* ARP: a key plays a phrase (orkest_phrases.inc) from its note instead of the note: on, phrase, speed (0 half,
+     * 1 as written, 2 double), gate (10..100 % of each note's length), mode (0 HOLD: loops while held, 1 ONCE: once
+     * through per press, 2 LATCH: loops until another key or ARP off); arp_inc: the internal tempo, MIDI clock ticks a
+     * block (Q16; MIDI clock in takes over while it runs) */
+    volatile uint8_t arp_on, arp_phrase, arp_speed, arp_gate, arp_mode;
+    volatile uint32_t arp_inc;
 };
+/* a phrase's note: start (ticks, 24 a quarter note), length (ticks), interval from the key (semitones) */
+typedef struct { uint16_t at; uint8_t len; int8_t iv; } ork_pev_t;
+typedef struct { uint16_t first, n, len; } ork_phrase_t;   /* its notes in PEV, its length (ticks) */
 extern struct ork_settings ork_set;
 /* What the player reports (written by the audio ISR). */
 struct ork_status {

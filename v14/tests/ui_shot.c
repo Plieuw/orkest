@@ -65,5 +65,15 @@ int main(void){
   ctl.buttons = 1u << 4; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* ENV again: back */
   ctl.encoders[4] = 5; groove_screen_control(); ctl.encoders[4] = 0;
   if (ork_set.transient != 84) { printf("screen test FAIL: ENV closes its menu\n"); return 1; }
+  ctl.buttons = 1u << 10; groove_screen_control(); ctl.buttons = 0;   /* ARP: its menu; SELECT on, K1 +12, K4 LATCH */
+  ctl.encoders[0] = 1; ctl.encoders[2] = 12; ctl.encoders[5] = 1; groove_screen_control();
+  ctl.encoders[0] = ctl.encoders[2] = 0; ctl.encoders[5] = 1; groove_screen_control(); ctl.encoders[5] = 0;   /* K4 twice: LATCH */
+  for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-arp.rgb565");
+  if (!ork_set.arp_on || ork_set.arp_phrase != 12 || ork_set.arp_mode != 2 || ork_set.patch != 10) {
+    printf("screen test FAIL: ARP menu (%d %d %d %d)\n", ork_set.arp_on, ork_set.arp_phrase, ork_set.arp_mode, ork_set.patch); return 1; }
+  ctl.buttons = 1u << 8; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* HOME: back, ARP stays on */
+  ork_stat.last_note = 69;
+  for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-main-arp.rgb565");
+  if (!ork_set.arp_on) { printf("screen test FAIL: ARP off after HOME\n"); return 1; }
   printf("screen test passed (build/host/screen-*.rgb565)\n");
   return 0;}

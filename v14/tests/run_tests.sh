@@ -8,7 +8,7 @@ python3 tools/gen_bank.py build/orkest-bank.bin --header build/orkest_bank_file.
 INC="-DFM1_HOST_TEST -Iapp -Iapp/synth -Iapp/board -Isdk/include -Isdk/config -Ibuild"
 SRC="tests/orkest_test.c app/orkest_player.c app/orkest_bank.c"
 cc -std=gnu11 -O1 -Wall -Wextra -Wno-unused-parameter $INC -o build/host/orkest_test $SRC -lm
-build/host/orkest_test build/host/orkest-v14-demo.wav
+build/host/orkest_test build/host/orkest-v14-demo.wav build/host/orkest-v14-phrases.wav
 cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -fno-sanitize-recover=all $INC -o build/host/orkest_test_san $SRC -lm
 echo "== under ASan / UBSan"
 build/host/orkest_test_san > build/host/san.log || { cat build/host/san.log; exit 1; }

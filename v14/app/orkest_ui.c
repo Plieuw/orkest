@@ -19,6 +19,8 @@
 #include "version.h"
 #include <string.h>
 #include "orkest_lfo.inc"
+#define ORK_PHRASE_NAMES
+#include "orkest_phrases.inc"
 
 enum { BACK = 0x0000, TEXT = 0xef5d, ACCENT = 0x07ff, DIM = 0x738e, AMBER = 0xfd20 };
 enum { B_OCTDN, B_OCTUP, B_FX, B_SCL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B_PLAY, B_REC };
@@ -155,8 +157,9 @@ static void knob_row(unsigned l, const char *label, const char *value, uint16_t 
 }
 
 /* --------------------------------------------------------- settings --- */
-#define SET_MAGIC 0x3453524FU    /* "ORS4" (earlier records: read as the defaults) */
-#define SET_MAGIC_3 0x3353524FU  /* "ORS3": the same, its last two bytes zero */
+#define SET_MAGIC 0x3553524FU    /* "ORS5" (earlier records: read as the defaults) */
+#define SET_MAGIC_4 0x3453524FU  /* "ORS4": up to the ARP fields, its check where they start */
+#define SET_MAGIC_3 0x3353524FU  /* "ORS3": the same, transient and tail zero */
 struct settings {
     uint32_t magic;
     uint8_t patch, attack, release, reverb;
@@ -164,6 +167,7 @@ struct settings {
     uint8_t lfo_on, lfo_rate, lfo_vib, lfo_trem, lfo_delay, lfo_sync, lfo_div;
     uint16_t bpm;
     uint8_t transient, tail;
+    uint8_t arp_on, arp_phrase, arp_speed, arp_gate, arp_mode, pad[3];
     uint32_t check;
 };
 /* the LFO's note values in TEMPO: MIDI clock ticks a cycle (24 a quarter note) */
@@ -185,14 +189,15 @@ static void lfo_apply(void)        /* the player's per-block steps for rate and 
         ? (uint32_t)((((uint64_t)1 << 32) * 128u * bpm * 24u) / (44100ull * 60u * DIV[lfo_div].ticks))
         : LFO_INC[ork_set.lfo_rate & 127u];
     ork_set.lfo_dstep = blocks ? 65536u / blocks : 65536u;
+    ork_set.arp_inc = (uint32_t)((65536ull * 24u * 128u * bpm) / (60u * 44100u));   /* the phrases' ticks a block */
     ork_set.lfo_on = ork_set.lfo_vib || ork_set.lfo_trem;   /* on while it has something to do */
 }
 static int8_t octave;
-static uint32_t set_check(const struct settings *s)
+static uint32_t set_check(const struct settings *s, uint32_t n)
 {
     const uint8_t *p = (const uint8_t *)s;
     uint32_t h = 2166136261u, i;
-    for (i = 0; i < offsetof(struct settings, check); i++)
+    for (i = 0; i < n; i++)
         h = (h ^ p[i]) * 16777619u;
     return h;
 }
@@ -204,11 +209,25 @@ static uint32_t set_offset(void)
 static void settings_load(void)
 {
     struct settings s;
-    if (!fm1_flash_size() || fm1_flash_read(set_offset(), &s, sizeof s) != FM1_FLASH_OK ||
-        (s.magic != SET_MAGIC && s.magic != SET_MAGIC_3) || s.check != set_check(&s))
+    uint32_t old;
+    if (!fm1_flash_size() || fm1_flash_read(set_offset(), &s, sizeof s) != FM1_FLASH_OK)
+        return;
+    memcpy(&old, (const uint8_t *)&s + offsetof(struct settings, arp_on), 4);   /* an older record's check */
+    if (s.magic == SET_MAGIC ? s.check != set_check(&s, offsetof(struct settings, check))
+        : (s.magic != SET_MAGIC_4 && s.magic != SET_MAGIC_3) || old != set_check(&s, offsetof(struct settings, arp_on)))
         return;
     if (s.magic == SET_MAGIC_3)                     /* from before the ENV menu: the parts as recorded */
         s.transient = s.tail = 64;
+    if (s.magic != SET_MAGIC) {                     /* from before the ARP menu: its defaults */
+        s.arp_on = s.arp_phrase = s.arp_mode = 0;
+        s.arp_speed = 1;
+        s.arp_gate = 90;
+    }
+    ork_set.arp_on = s.arp_on & 1u;
+    ork_set.arp_phrase = s.arp_phrase < ORK_NPHRASE ? s.arp_phrase : 0u;
+    ork_set.arp_speed = s.arp_speed <= 2u ? s.arp_speed : 1u;
+    ork_set.arp_gate = s.arp_gate >= 10u && s.arp_gate <= 100u ? s.arp_gate : 90u;
+    ork_set.arp_mode = s.arp_mode <= 2u ? s.arp_mode : 0u;
     ork_set.patch = s.patch;
     ork_set.attack = s.attack & 127u;
     ork_set.release = s.release & 127u;
@@ -245,7 +264,12 @@ static int settings_save(void)
     s.bpm = bpm;
     s.transient = ork_set.transient;
     s.tail = ork_set.tail;
-    s.check = set_check(&s);
+    s.arp_on = ork_set.arp_on;
+    s.arp_phrase = ork_set.arp_phrase;
+    s.arp_speed = ork_set.arp_speed;
+    s.arp_gate = ork_set.arp_gate;
+    s.arp_mode = ork_set.arp_mode;
+    s.check = set_check(&s, offsetof(struct settings, check));
     if (!fm1_flash_size() || fm1_flash_erase(set_offset()) != FM1_FLASH_OK)
         return -1;
     return fm1_flash_write(set_offset(), &s, sizeof s) == FM1_FLASH_OK ? 0 : -1;
@@ -254,6 +278,7 @@ static int settings_save(void)
 /* ------------------------------------------------------------ state --- */
 static uint32_t prev_keys, blocked_keys, prev_buttons, led_shown, event_until, splash_until, frame_ms;
 static uint8_t lfo_menu;           /* the LFO menu is open: the knobs set the LFO */
+static uint8_t arp_menu;           /* the ARP menu is open: the knobs choose and shape the phrase */
 static uint8_t env_menu;           /* the ENV menu is open: the knobs set the envelope and the parts' levels */
 static uint8_t key_note[KEYS];
 static char event[40];
@@ -291,6 +316,8 @@ static void leds(void)
     want = prev_keys & ((1u << KEYS) - 1u);
     if (ork_set.lfo_on)
         want |= 1u << 29;
+    if (ork_set.arp_on)
+        want |= 1u << 30;
     if (octave < 0)
         want |= 1u << 27;
     if (octave > 0)
@@ -305,9 +332,21 @@ static void leds(void)
         fm1_led_set(B_OCTUP, octave > 0);
     if (diff & (1u << 29))
         fm1_led_set(B_LFO, ork_set.lfo_on);
+    if (diff & (1u << 30))
+        fm1_led_set(B_ARP, ork_set.arp_on);
     led_shown = want;
 }
 
+static const char *arp_hint(void)   /* on / off and the tempo the phrases follow */
+{
+    static char b[40];
+    unsigned t10 = ork_stat.clock ? ork_stat.clock_bpm10 : bpm * 10u;
+    char *p = put_str(b, ork_set.arp_on ? "ARP ON  " : "ARP OFF  ");
+    p = put_str(p, ork_stat.clock ? "MIDI " : "");
+    p = put_int(p, (int)((t10 + 5u) / 10u));
+    put_str(p, " BPM  SELECT ON OFF");
+    return b;
+}
 static void draw(uint32_t now)
 {
     char b[40], v[20], *p;
@@ -361,6 +400,19 @@ static void draw(uint32_t now)
         p = put_int(p, (int)(d % 10u));
         put_str(p, " S");
         knob_row(L_K4, "K4 DELAY", v, TEXT);
+    } else if (arp_menu) {                          /* the ARP menu: the phrase a key plays */
+        static const char *const SPEED[3] = {"1/2 X", "1 X", "2 X"}, *const MODE[3] = {"HOLD", "ONCE", "LATCH"};
+        unsigned ph = ork_set.arp_phrase % ORK_NPHRASE;
+        line(L_SOUND, PHRASE_NAME[ph][0], ork_set.arp_on ? ACCENT : DIM);
+        line(L_NOTE, PHRASE_NAME[ph][1], TEXT);
+        p = put_int(v, (int)ph + 1);
+        p = put_str(p, "/");
+        put_int(p, ORK_NPHRASE);
+        knob_row(L_K1, "K1 PHRASE", v, TEXT);
+        knob_row(L_K2, "K2 SPEED", SPEED[ork_set.arp_speed % 3u], TEXT);
+        put_str(put_int(v, ork_set.arp_gate), " %");
+        knob_row(L_K3, "K3 GATE", v, TEXT);
+        knob_row(L_K4, "K4 MODE", MODE[ork_set.arp_mode % 3u], TEXT);
     } else if (env_menu) {                          /* the ENV menu: the envelope and the three parts */
         line(L_SOUND, "ENVELOPE", ACCENT);
         line(L_NOTE, "64 AS RECORDED", DIM);
@@ -392,7 +444,9 @@ static void draw(uint32_t now)
             p = put_str(p, "+");
         p = put_int(p, octave);
         if (ork_set.lfo_on)
-            put_str(p, "   LFO");
+            p = put_str(p, "   LFO");
+        if (ork_set.arp_on)
+            put_str(p, "   ARP");
         line(L_NOTE, b, TEXT);
         p = put_int(v, ork_set.patch + 1);
         p = put_str(p, "/");
@@ -406,7 +460,7 @@ static void draw(uint32_t now)
         knob_row(L_K4, "K4 ROOM", v, TEXT);
     }
     line(L_EVENT, (int32_t)(now - event_until) < 0 ? event : lfo_menu ? "SELECT SYNC  ALGO BPM  LFO BACK"
-         : env_menu ? "ENV OR HOME BACK" : "",
+         : env_menu ? "ENV OR HOME BACK" : arp_menu ? arp_hint() : "",
          (int32_t)(now - event_until) < 0 ? AMBER : DIM);
     p = put_str(b, "VOICES ");
     p = put_int(p, ork_stat.voices);
@@ -481,9 +535,10 @@ void groove_screen_control(void)
             octave = octave < -3 ? -3 : octave > 3 ? 3 : octave;
         } else if (k == B_SAVE)
             say(settings_save() == 0 ? "SAVED" : "SAVE FAILED", now);
-        else if (k == B_LFO || k == B_ENV || (k == B_HOME && (lfo_menu || env_menu))) {
+        else if (k == B_LFO || k == B_ENV || k == B_ARP || (k == B_HOME && (lfo_menu || env_menu || arp_menu))) {
             lfo_menu = k == B_LFO ? !lfo_menu : 0;
             env_menu = k == B_ENV ? !env_menu : 0;
+            arp_menu = k == B_ARP ? !arp_menu : 0;
             force_draw = 1;
         }
         else {
@@ -513,6 +568,31 @@ void groove_screen_control(void)
                 *t[k] = (uint8_t)(v < 0 ? 0 : v > 127 ? 127 : v);
             }
         lfo_apply();
+    } else if (arp_menu) {
+        int v;
+        if (c.encoders[E_SELECT])                   /* SELECT: on / off */
+            ork_set.arp_on = c.encoders[E_SELECT] > 0;
+        if (c.encoders[E_ALGO]) {                   /* ALGORITHM: the internal tempo (shared with the LFO) */
+            v = (int)bpm + c.encoders[E_ALGO];
+            bpm = (uint16_t)(v < 40 ? 40 : v > 300 ? 300 : v);
+            lfo_apply();
+        }
+        if (c.encoders[E_K1] || c.encoders[E_PRESETS]) {
+            v = (int)ork_set.arp_phrase + c.encoders[E_K1] + c.encoders[E_PRESETS];
+            ork_set.arp_phrase = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NPHRASE ? (int)ORK_NPHRASE - 1 : v);
+        }
+        if (c.encoders[E_K2]) {
+            v = (int)ork_set.arp_speed + (c.encoders[E_K2] > 0 ? 1 : -1);
+            ork_set.arp_speed = (uint8_t)(v < 0 ? 0 : v > 2 ? 2 : v);
+        }
+        if (c.encoders[E_K3]) {
+            v = (int)ork_set.arp_gate + c.encoders[E_K3];
+            ork_set.arp_gate = (uint8_t)(v < 10 ? 10 : v > 100 ? 100 : v);
+        }
+        if (c.encoders[E_K4]) {
+            v = (int)ork_set.arp_mode + (c.encoders[E_K4] > 0 ? 1 : -1);
+            ork_set.arp_mode = (uint8_t)(v < 0 ? 0 : v > 2 ? 2 : v);
+        }
     } else if (env_menu) {
         volatile uint8_t *t[4] = {&ork_set.attack, &ork_set.release, &ork_set.transient, &ork_set.tail};
         const int e[4] = {c.encoders[E_K1], c.encoders[E_K2], c.encoders[E_K3], c.encoders[E_K4]};
@@ -531,7 +611,7 @@ void groove_screen_control(void)
         if ((d = c.encoders[E_K4]) != 0)
             ork_set.reverb = (uint8_t)(ork_set.reverb + d < 0 ? 0 : ork_set.reverb + d > 127 ? 127 : ork_set.reverb + d);
     }
-    if (!lfo_menu && !env_menu && (c.encoders[E_SELECT] || c.encoders[E_ALGO]))
+    if (!lfo_menu && !env_menu && !arp_menu && (c.encoders[E_SELECT] || c.encoders[E_ALGO]))
         say(c.encoders[E_SELECT] ? "SELECT" : "ALGORITHM", now);
     /* MASTER: 0..1023 -> 0..127, with a little hysteresis against ADC noise */
     if (c.knob <= 1023u && (master_adc > 1023u || c.knob + 4u < master_adc || c.knob > master_adc + 4u)) {

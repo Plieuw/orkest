@@ -57,7 +57,7 @@ typedef struct {
 static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
-struct ork_settings ork_set = {0, 8, 50, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64};
+struct ork_settings ork_set = {0, 8, 50, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64, 0, 0, 1, 90, 0, 9131};
 struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0};
 
 /* ------------------------------------------------------------ events --- */
@@ -317,6 +317,143 @@ static FM1_AUDIO_CODE void clock_tick(void)
     }
     clk_age = 0;
 }
+/* ------------------------------------------------------------ phrases --- */
+/* ARP: each key held plays the chosen phrase from its note (up to NRUN at once, each its own place in the phrase).
+ * Positions in MIDI clock ticks, Q16; a phrase's notes start on the block they fall in (<= 2.9 ms late). */
+#define ORK_PHRASE_EVENTS
+#include "orkest_phrases.inc"
+#define NRUN 4
+#define RUN_NOTES 8
+typedef struct {
+    uint8_t key, vel, on, stop;                  /* stop: let go (HOLD), it ends; ONCE: it ends at its end */
+    uint16_t idx;                                /* the next note in the phrase */
+    uint32_t pos;                                /* ticks into the phrase, Q16 */
+    uint8_t nn, note[RUN_NOTES];                 /* its notes sounding, the ticks (Q16) each has left */
+    int32_t left[RUN_NOTES];
+} run_t;
+static run_t run[NRUN];
+static uint8_t run_phrase;                       /* the phrase the runners play (a change restarts them) */
+static FM1_AUDIO_CODE void run_quiet(run_t *r)  /* its notes off */
+{
+    while (r->nn) {
+        r->nn--;
+        note_off(r->note[r->nn]);
+    }
+}
+static FM1_AUDIO_CODE void run_end(run_t *r)
+{
+    run_quiet(r);
+    r->on = 0;
+}
+static FM1_AUDIO_CODE void run_start(uint32_t key, uint32_t vel)
+{
+    run_t *r = 0;
+    uint32_t i;
+    if (ork_set.arp_mode == 2u)                  /* LATCH: the new key takes over */
+        for (i = 0; i < NRUN; i++)
+            if (run[i].on)
+                run_end(&run[i]);
+    for (i = 0; i < NRUN && !r; i++)
+        if (!run[i].on || run[i].key == key)
+            r = &run[i];
+    if (!r) {                                    /* all busy: the furthest along gives way */
+        r = &run[0];
+        for (i = 1; i < NRUN; i++)
+            if (run[i].pos > r->pos)
+                r = &run[i];
+    }
+    run_quiet(r);
+    r->key = (uint8_t)key;
+    r->vel = (uint8_t)vel;
+    r->on = 1;
+    r->stop = 0;
+    r->idx = 0;
+    r->pos = 0;
+}
+static FM1_AUDIO_CODE void run_release(uint32_t key)   /* the key let go: HOLD stops, ONCE and LATCH play on */
+{
+    uint32_t i;
+    for (i = 0; i < NRUN; i++)
+        if (run[i].on && run[i].key == key && ork_set.arp_mode == 0u)
+            run_end(&run[i]);
+}
+static FM1_AUDIO_CODE int run_has(uint32_t key)
+{
+    uint32_t i;
+    for (i = 0; i < NRUN; i++)
+        if (run[i].on && run[i].key == key)
+            return 1;
+    return 0;
+}
+static FM1_AUDIO_CODE void phrases_sync(void)   /* before the block's events: ARP off or another phrase, it ends */
+{
+    uint32_t i;
+    if (!ork_set.arp_on || ork_set.arp_phrase != run_phrase) {
+        for (i = 0; i < NRUN; i++)
+            if (run[i].on)
+                run_end(&run[i]);
+        run_phrase = ork_set.arp_phrase;
+    }
+}
+static FM1_AUDIO_CODE void phrases(void)
+{
+    uint32_t i, k, inc;
+    const ork_phrase_t *ph;
+    if (!ork_set.arp_on || run_phrase >= ORK_NPHRASE)
+        return;
+    ph = &PHRASE[run_phrase];
+    /* ticks this block: from MIDI clock while it runs (2^31 / its tick length in samples Q8), else the tempo */
+    inc = ork_stat.clock && clk_len_q8 ? 2147483648u / clk_len_q8 : ork_set.arp_inc;
+    inc = ork_set.arp_speed == 0u ? inc >> 1 : ork_set.arp_speed == 2u ? inc << 1 : inc;
+    for (i = 0; i < NRUN; i++) {
+        run_t *r = &run[i];
+        if (!r->on)
+            continue;
+        for (k = 0; k < r->nn;)                  /* notes whose time is up */
+            if (r->left[k] <= 0) {
+                note_off(r->note[k]);
+                r->nn--;
+                r->note[k] = r->note[r->nn];
+                r->left[k] = r->left[r->nn];
+            } else
+                k++;
+        for (;;) {
+            if (r->idx >= ph->n && r->pos >= (uint32_t)ph->len << 16) {   /* the end of the phrase */
+                if (ork_set.arp_mode == 1u) {
+                    if (!r->nn)
+                        r->on = 0;
+                    break;
+                }
+                r->pos -= (uint32_t)ph->len << 16;
+                r->idx = 0;
+            }
+            if (r->idx >= ph->n || ((uint32_t)PEV[ph->first + r->idx].at << 16) > r->pos)
+                break;
+            {
+                const ork_pev_t *e = &PEV[ph->first + r->idx++];
+                int32_t n = (int32_t)r->key + e->iv;
+                if (n < 0 || n > 127)
+                    continue;
+                if (r->nn == RUN_NOTES) {        /* full: the oldest goes */
+                    note_off(r->note[0]);
+                    r->nn--;
+                    r->note[0] = r->note[r->nn];
+                    r->left[0] = r->left[r->nn];
+                }
+                note_on((uint32_t)n, r->vel);
+                r->note[r->nn] = (uint8_t)n;
+                r->left[r->nn] = (int32_t)(((uint32_t)e->len * ork_set.arp_gate << 16) / 100u);
+                r->nn++;
+            }
+        }
+        if (!r->on)
+            continue;
+        r->pos += inc;
+        for (k = 0; k < r->nn; k++)
+            r->left[k] -= (int32_t)inc;
+    }
+}
+
 static FM1_AUDIO_CODE void events(void)
 {
     uint32_t l;
@@ -324,6 +461,8 @@ static FM1_AUDIO_CODE void events(void)
         panic_req = 0;
         for (l = 0; l < 128u; l++)
             held[l] = 0;
+        for (l = 0; l < NRUN; l++)
+            run[l].on = run[l].nn = 0;
         all_off();
     }
     for (l = 0; l < 2u; l++)
@@ -349,15 +488,24 @@ static FM1_AUDIO_CODE void events(void)
             if (st == 0x90u && d2) {
                 if (held[d1] < 255u)
                     held[d1]++;
-                note_on(d1, d2);
+                if (ork_set.arp_on)                 /* ARP: the key plays its phrase */
+                    run_start(d1, d2);
+                else
+                    note_on(d1, d2);
             } else if (st == 0x80u || st == 0x90u) {
-                if (held[d1] && --held[d1] == 0u)
-                    note_off(d1);
+                if (held[d1] && --held[d1] == 0u) {
+                    if (run_has(d1))
+                        run_release(d1);
+                    else
+                        note_off(d1);
+                }
             } else if (st == 0xB0u && d1 == 1u) {
                 modwheel = (uint8_t)d2;
             } else if (st == 0xB0u && (d1 == 123u || d1 == 120u)) {
                 for (d1 = 0; d1 < 128u; d1++)
                     held[d1] = 0;
+                for (d1 = 0; d1 < NRUN; d1++)
+                    run[d1].on = run[d1].nn = 0;
                 all_off();
             }
         }
@@ -473,10 +621,13 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
             lane[k].r = lane[k].w;
         for (k = 0; k < 128u; k++)
             held[k] = 0;
+        for (k = 0; k < NRUN; k++)
+            run[k].on = run[k].nn = 0;
         ork_stat.voices = 0;
         ork_stat.idle = 1;
         return 0;
     }
+    phrases_sync();
     events();
     {   /* the LFO for this block: vibrato depth (cents, Q8) from the panel (when on) or the mod wheel, tremolo */
         int32_t vib = ork_set.lfo_on ? ork_set.lfo_vib : 0, trem = ork_set.lfo_on ? ork_set.lfo_trem : 0;
@@ -501,6 +652,7 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
             lfo_phase += ork_set.lfo_inc;           /* free (Hz) or the internal tempo */
         lfo_s = lfo_sine(lfo_phase);
     }
+    phrases();
     for (k = 0; k < NVOICE; k++) {
         voice_t *v = &voice[k];
         uint32_t stt = v->t.step, stl = v->l.step, str = v->r.step, lend;

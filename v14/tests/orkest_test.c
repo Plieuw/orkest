@@ -478,6 +478,81 @@ int main(int argc, char **argv)
         ork_set.lfo_on = 0; ork_set.lfo_vib = 0; ork_set.lfo_sync = 0;
     }
 
+    /* ---- ARP: the phrases */
+    {
+        static uint8_t seq[64];
+        unsigned n = 0, t, last = 255, firsts = 0;
+        static const uint8_t PRELUDE[9] = {60, 64, 67, 72, 76, 67, 72, 76, 60};
+        int same = 1;
+        use(patch_of("HARP"));
+        ork_set.arp_on = 1; ork_set.arp_phrase = 0; ork_set.arp_mode = 0; ork_set.arp_speed = 1; ork_set.arp_gate = 90;
+        render(10);
+        (void)ork_post(0, 0x90, 60, 100);           /* a key: PRELUDE C from C4, 120 BPM (a 16th = 125 ms) */
+        for (t = 0; t < 2100u * 441u / 1280u && n < sizeof seq; t++) {   /* block by block, 2.9 ms each */
+            orkest_render(blk);
+            if (ork_stat.last_note != last) {
+                last = ork_stat.last_note;
+                if (n == 8u) firsts = t * 128u * 1000u / 44100u;   /* the 9th note: ms after the key */
+                seq[n++] = (uint8_t)last;
+            }
+        }
+        for (t = 0; t < 9u; t++) same &= seq[t] == PRELUDE[t];
+        check("ARP, PRELUDE C on C4: C E G C E G C E, then the bar again", same && n >= 9);
+        printf("  PRELUDE C: the 9th note %u ms after the key\n", firsts);
+        check("... at 120 BPM: the figure's repeat 1 s after the start (+-6 ms)", firsts >= 994u && firsts <= 1006u);
+        check("... held: it loops (still playing after 2 s)", sounding() > 0);
+        (void)ork_post(0, 0x80, 60, 0);
+        render(2500);
+        check("... HOLD, let go: it stops", sounding() == 0);
+        {   /* MIDI clock at 150 BPM (a tick = 735 samples): the phrase follows it, the figure repeats after 0.8 s */
+            double next = 0;
+            unsigned blk_n, ninth = 0, cnt = 0;
+            last = 255;
+            for (blk_n = 0; blk_n < 44100u * 2u / 128u; blk_n++) {
+                while (next < blk_n * 128.0) { note(0xF8, 0, 0); next += 735.0; }
+                if (blk_n == 44100u / 2u / 128u) { (void)ork_post(0, 0x90, 60, 100); cnt = 0; last = 255; }
+                orkest_render(blk);
+                if (blk_n >= 44100u / 2u / 128u && ork_stat.last_note != last) {
+                    last = ork_stat.last_note;
+                    if (++cnt == 9u) ninth = (blk_n - 44100u / 2u / 128u) * 128u * 1000u / 44100u;
+                }
+            }
+            (void)ork_post(0, 0x80, 60, 0);
+            render(2500);
+            printf("  MIDI clock 150 BPM: the 9th note %u ms after the key\n", ninth);
+            check("ARP on MIDI clock 150 BPM: the figure repeats after 0.8 s (+-10 ms)", ninth >= 790u && ninth <= 810u);
+            render(800);                             /* the clock gone */
+        }
+        ork_set.arp_mode = 1;                        /* ONCE: a short press plays it all, then ends */
+        (void)ork_post(0, 0x90, 62, 100); render(20); (void)ork_post(0, 0x80, 62, 0);
+        render(3000);
+        check("ONCE, a short press: still playing at 3 s (the phrase lasts 4 s)", sounding() > 0 && ork_stat.last_note >= 62);
+        render(4000);
+        check("... then it ends by itself", sounding() == 0);
+        ork_set.arp_mode = 2;                        /* LATCH: plays on after letting go, a new key takes over */
+        (void)ork_post(0, 0x90, 60, 100); render(20); (void)ork_post(0, 0x80, 60, 0);
+        render(5000);
+        check("LATCH: plays on after letting go", sounding() > 0);
+        (void)ork_post(0, 0x90, 67, 100); render(20); (void)ork_post(0, 0x80, 67, 0);
+        render(30);
+        check("... another key takes over: from its note", ork_stat.last_note == 67);
+        ork_set.arp_on = 0;
+        render(3000);
+        check("ARP off: everything ends", sounding() == 0);
+        ork_set.arp_on = 1; ork_set.arp_mode = 0;
+        for (t = 0; t < 19u; t++) {                  /* every phrase, low and high: in range, sane, ends when let go */
+            ork_set.arp_phrase = (uint8_t)t;
+            (void)ork_post(0, 0x90, 48, 100); (void)ork_post(0, 0x90, 72, 100);
+            peak = 0;
+            render(4500);
+            (void)ork_post(0, 0x80, 48, 0); (void)ork_post(0, 0x80, 72, 0);
+            render(3000);
+            if (peak >= (1 << 23) || peak < (1 << 15) || sounding() != 0) { printf("  phrase %u: peak %d, voices %u\n", t, peak, ork_stat.voices); same = 0; }
+        }
+        check("every phrase on two keys: a sane level, it ends when let go", same);
+        ork_set.arp_on = 0;
+    }
+
     /* ---- every sound in turn, to listen to */
     if (argc > 1 && (wav = fopen(argv[1], "wb")) != 0) {
         static const uint8_t SCALE[] = {60, 62, 64, 65, 67, 69, 71, 72};
@@ -519,6 +594,36 @@ int main(int argc, char **argv)
         fseek(wav, 40, SEEK_SET); fwrite(&v, 4, 1, wav);
         fclose(wav);
         printf("wrote %s (%u frames)\n", argv[1], wav_frames);
+    }
+    if (argc > 2 && (wav = fopen(argv[2], "wb")) != 0) {   /* the phrases, to listen to */
+        static const char *const PP[19] = {"HARP", "CELLI", "HARP", "TUTTI", "FLUTE", "STRINGS", "OBOE", "STRINGS",
+                                           "VIOLINS", "BRASS", "STRINGS", "VIOLINS", "PIZZICATO", "HARP", "TUTTI", "HORN",
+                                           "STRINGS", "STRINGS", "HARP"};
+        static const uint8_t KEY[19] = {60, 55, 60, 62, 71, 67, 67, 50, 64, 62, 67, 67, 69, 69, 60, 60, 58, 60, 55};
+        uint16_t a = 1, ch = 2, ba = 4, bits = 16;
+        uint32_t sr = FM1_SAMPLE_RATE, br = FM1_SAMPLE_RATE * 4u, v, q;
+        wav_frames = 0;
+        fwrite("RIFF\0\0\0\0WAVEfmt \x10\0\0\0", 1, 20, wav);
+        fwrite(&a, 2, 1, wav); fwrite(&ch, 2, 1, wav); fwrite(&sr, 4, 1, wav); fwrite(&br, 4, 1, wav);
+        fwrite(&ba, 2, 1, wav); fwrite(&bits, 2, 1, wav); fwrite("data\0\0\0\0", 1, 8, wav);
+        ork_set.reverb = 45; ork_set.arp_on = 1; ork_set.arp_mode = 1; ork_set.arp_speed = 1; ork_set.arp_gate = 90;
+        for (q = 0; q < 19u; q++) {
+            int pi, k;
+            for (pi = -1, k = 0; k < ork_bank.np; k++) if (!strcmp(ork_bank.patch[k].name, PP[q])) pi = k;
+            use(pi < 0 ? patch_of("STRINGS") : pi);
+            ork_set.arp_phrase = (uint8_t)q;
+            (void)ork_post(0, 0x90, KEY[q], 100); render(20); (void)ork_post(0, 0x80, KEY[q], 0);
+            render(q == 3 ? 5200 : 4300);
+            render(900);
+        }
+        ork_set.arp_on = 0;
+        v = 36 + wav_frames * 4u;
+        fseek(wav, 4, SEEK_SET); fwrite(&v, 4, 1, wav);
+        v = wav_frames * 4u;
+        fseek(wav, 40, SEEK_SET); fwrite(&v, 4, 1, wav);
+        fclose(wav);
+        wav = 0;
+        printf("wrote %s (%u frames)\n", argv[2], wav_frames);
     }
     printf(bad ? "orkest v14 test: %d FAILED\n" : "orkest v14 test passed\n", bad);
     return bad != 0;

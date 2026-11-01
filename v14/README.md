@@ -16,13 +16,14 @@ sequencer worden niet gebruikt.
 | KNOB 1 of PRESETS | klank kiezen (24); zet attack en release op die van de klank |
 | KNOB 2 / 3 / 4 | attack / release / ROOM (galm) |
 | ENV | ENV-menu open/dicht (ook HOME sluit): K1 attack, K2 release, K3 TRANSIENT (de aanzet; 64 = zoals opgenomen, 127 = harder, 0 = alleen de aanhoudende toon vanaf de eerste sample), K4 TAIL (het opgenomen uitklinken na loslaten; 0 = uit) |
+| ARP | ARP-menu open/dicht (ook HOME sluit): een toets speelt een korte frase (max. 2 maten) vanaf zijn noot. SELECT aan/uit, K1 frase (19: Bach, Pachelbel, Vivaldi, Händel, Mozart, Beethoven, Chopin, Satie), K2 snelheid (½×, 1×, 2×), K3 gate (10–100 %), K4 HOLD (loopt zolang je vasthoudt) / ONCE (één keer) / LATCH (loopt door, een nieuwe toets transponeert), ALGORITHM tempo. Volgt MIDI-clock als die binnenkomt. Meerdere toetsen = meerdere frases tegelijk |
 | LFO | LFO-menu open/dicht (ook HOME sluit): K1 snelheid, K2 vibrato (tot ±60 cent), K3 tremolo, K4 inloopvertraging (0–3 s). De LFO werkt zodra vibrato of tremolo boven 0 staat (lampje aan, "LFO" op het scherm) |
 | in het LFO-menu: SELECT | FREE (K1 in Hz, 0,3–16) of TEMPO (K1 een notenwaarde: 4 maten … 1/32, met punt- en triolen) |
 | in het LFO-menu: ALGORITHM | intern tempo, 40–300 BPM |
 | MIDI-clock in (DIN/TRS, USB, Bluetooth) | neemt het tempo over zolang hij loopt ("MIDI 121 BPM"); de LFO loopt vast op de tikken, Start = op de tel |
 | MIDI CC 1 (modwiel) | vibrato, ook met de LFO uit |
 | OCT- / OCT+ | octaaf −3..+3 |
-| SAVE | klank, attack, release, room, transient, tail, LFO en octaaf bewaren (terug na herstart) |
+| SAVE | klank, attack, release, room, transient, tail, LFO, ARP en octaaf bewaren (terug na herstart) |
 | MASTER | volume |
 | MIDI in (DIN/TRS, USB, Bluetooth) | noten op elk kanaal, CC 120/123 = alles uit |
 
@@ -51,6 +52,7 @@ boventonen. Blazers en contrabas komen uit VSCO's opnames zonder vibrato. Bewegi
 | `app/orkest_bank.c` | de klankbank in de gebruikersflash: controle (CRC, commit-woord) en de SysEx-upload |
 | `app/orkest_ui.c` | scherm (M-VAVE's 5x7-font), toetsen, knoppen, LEDs, instellingen |
 | `app/orkest_sdk.c` | MIDI in, SysEx, en de haken die de SDK van een app verwacht |
+| `tools/gen_phrases.py` | de ARP-frases in nootnamen → `app/orkest_phrases.inc` |
 | `tools/gen_bank.py` | de klankbank uit `../assets/samples-cc0` (via `../tools/gen_orkest.py`) |
 | `tools/build_open.py` | bouwen op Linux: een port van M-VAVE's `Build.ps1` en `Package.cs` |
 | `tools/make_site_v14.py` | de installatiepagina (`../web/index_v14.html`, `../web/orkbank.js`) |
