@@ -105,6 +105,9 @@ struct ork_settings {
      * through per press, 2 LATCH: loops until another key or ARP off); arp_inc: the internal tempo, MIDI clock ticks a
      * block (Q16; MIDI clock in takes over while it runs) */
     volatile uint8_t arp_on, arp_phrase, arp_speed, arp_gate, arp_mode;
+    /* SEQ: the scale ARP keeps to (orkest_scales.inc, 0 off) and its root (0 C .. 11 B); a phrase's notes outside it
+     * move to the nearest note in it (the lower one at a tie) */
+    volatile uint8_t scale, scale_root;
     volatile uint32_t arp_inc;
 };
 /* a phrase's note: start (ticks, 24 a quarter note), length (ticks), interval from the key (semitones) */

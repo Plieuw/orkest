@@ -57,7 +57,7 @@ typedef struct {
 static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
-struct ork_settings ork_set = {0, 8, 50, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64, 0, 0, 1, 90, 0, 9131};
+struct ork_settings ork_set = {0, 8, 50, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64, 0, 0, 1, 90, 0, 0, 0, 9131};
 struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0};
 
 /* ------------------------------------------------------------ events --- */
@@ -323,6 +323,20 @@ static FM1_AUDIO_CODE void clock_tick(void)
  * (<= 2.9 ms late). */
 #define ORK_PHRASE_EVENTS
 #include "orkest_phrases.inc"
+#define ORK_SCALE_MASKS
+#include "orkest_scales.inc"
+/* the note in the scale nearest to n (the lower one at a tie); every note when the scale is off */
+static FM1_AUDIO_CODE int32_t scale_snap(int32_t n)
+{
+    uint32_t mask = SCALE_MASK[ork_set.scale < ORK_NSCALE ? ork_set.scale : 0u], root = ork_set.scale_root % 12u, d;
+    for (d = 0; d < 7u; d++) {
+        if (n - (int32_t)d >= 0 && (mask >> ((uint32_t)(n - (int32_t)d + 120 - (int32_t)root) % 12u) & 1u))
+            return n - (int32_t)d;
+        if (mask >> ((uint32_t)(n + (int32_t)d + 120 - (int32_t)root) % 12u) & 1u)
+            return n + (int32_t)d;
+    }
+    return n;
+}
 #define NRUN 1
 #define RUN_NOTES 1
 typedef struct {
@@ -419,7 +433,7 @@ static FM1_AUDIO_CODE void phrases(void)
                 break;
             {
                 const ork_pev_t *e = &PEV[ph->first + r->idx++];
-                int32_t n = (int32_t)r->key + e->iv;
+                int32_t n = scale_snap((int32_t)r->key + e->iv);
                 if (n < 0 || n > 127)
                     continue;
                 run_quiet(r);                    /* one note at a time */

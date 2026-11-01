@@ -546,6 +546,21 @@ int main(int argc, char **argv)
         ork_set.arp_on = 0;
         render(3000);
         check("ARP off: everything ends", sounding() == 0);
+        {   /* SEQ scale C MAJOR: FUR ELISE from A4 (D#5 in it) stays on the white keys; off: D#5 again */
+            unsigned b, out = 0, sharp = 0;
+            ork_set.arp_on = 1; ork_set.arp_mode = 0; ork_set.arp_phrase = 20; ork_set.scale = 1; ork_set.scale_root = 0;
+            render(10);
+            (void)ork_post(0, 0x90, 69, 100);
+            for (b = 0; b < 1000u * 441u / 1280u; b++) { orkest_render(blk); if ((0x54Au >> (ork_stat.last_note % 12u)) & 1u) out++; }
+            (void)ork_post(0, 0x80, 69, 0); render(2000);
+            ork_set.scale = 0;
+            render(10);
+            (void)ork_post(0, 0x90, 69, 100);
+            for (b = 0; b < 1000u * 441u / 1280u; b++) { orkest_render(blk); if (ork_stat.last_note == 75) sharp++; }
+            (void)ork_post(0, 0x80, 69, 0); render(2000);
+            check("SEQ C MAJOR: FUR ELISE stays in the scale (no black key)", out == 0);
+            check("... scale off: as written (D#5 played)", sharp > 0);
+        }
         ork_set.arp_on = 1; ork_set.arp_mode = 0;
         for (t = 0; t < ORK_NPHRASE; t++) {         /* every phrase, mono, two keys: sane, one voice, ends when let go */
             ork_set.arp_phrase = (uint8_t)t;
