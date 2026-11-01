@@ -48,9 +48,14 @@ LIMIT = 520 * 1024              # the user partition (524 KiB) less the settings
 PREROLL = 32                    # the loop's own end before its start: the ADPCM decoder settled at the loop start
 TARGET = 7000.0                 # the sustain's RMS (int16)
 
-# V14's patches: as gen_orkest.py's, but MARCATO is one voice: the violins' sustain with the spiccato's transient
-PATCHES = [(n, a, r, [("VIOLINS", 0, 127, 0, 0, 0, "SPICCATO")]) if n == "MARCATO" else (n, a, r, l)
-           for n, a, r, l in g.PATCHES]
+# V14's patches: as gen_orkest.py's, but MARCATO is one voice: the violins' sustain with the spiccato's transient,
+# and short releases (4..7, 3..10 ms: the recorded release, TAIL, carries the end), in the order of the old ones
+def short_release(r):
+    return max(4, min(7, round(4 + (r - 25) * 3 / 45)))
+
+
+PATCHES = [(n, a, short_release(r), [("VIOLINS", 0, 127, 0, 0, 0, "SPICCATO")]) if n == "MARCATO"
+           else (n, a, short_release(r), l) for n, a, r, l in g.PATCHES]
 
 
 def raised(n, t0, t1):
