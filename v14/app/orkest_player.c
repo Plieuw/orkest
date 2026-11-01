@@ -55,6 +55,7 @@ typedef struct {
     uint8_t wk;                  /* the transient knob's share of the swell, Q8 (255: none) */
     uint16_t lp_a;               /* velocity -> tone: its lowpass coefficient, Q15 (32767: open) */
     uint8_t src;                 /* who started it: 0 a key (or MIDI), else ARP's runner + 1 */
+    uint32_t nid;                /* the note it belongs to (its layers share it): polyphony counts notes */
     int32_t lp1, lp2;            /* the lowpass's two poles */
 } voice_t;
 /* velocity -> tone: soft notes duller, hard ones brighter (orkest_tone.inc: 2 poles, 600 Hz .. open) */
@@ -210,6 +211,32 @@ static FM1_AUDIO_CODE const ork_zone_t *zone_of(const ork_inst_t *in, int32_t no
     return &ork_bank.zone[in->z0];
 }
 static uint8_t layer_inst[NVOICE];               /* the instrument a voice plays (its release) */
+#define NPOLY 16                                 /* notes at once; a new one past it ends the oldest */
+static uint32_t note_clock;
+static FM1_AUDIO_CODE void release_voice(voice_t *v, uint32_t time, int tail);
+static FM1_AUDIO_CODE void poly_limit(void)
+{
+    uint32_t i, j, n = 0, oldest = 0xFFFFFFFFu;
+    for (i = 0; i < NVOICE; i++) {               /* the notes playing (held, or a one-shot still sounding) */
+        const voice_t *v = &voice[i];
+        int first = 1;
+        if (v->stage != ST_ATTACK && v->stage != ST_SUSTAIN)
+            continue;
+        for (j = 0; j < i && first; j++)
+            if ((voice[j].stage == ST_ATTACK || voice[j].stage == ST_SUSTAIN) && voice[j].nid == v->nid)
+                first = 0;
+        if (first) {
+            n++;
+            if (v->nid < oldest)
+                oldest = v->nid;
+        }
+    }
+    if (n < NPOLY)
+        return;
+    for (i = 0; i < NVOICE; i++)                 /* last note priority: the oldest note gives way, quickly */
+        if (voice[i].nid == oldest && (voice[i].stage == ST_ATTACK || voice[i].stage == ST_SUSTAIN))
+            release_voice(&voice[i], 8u, 0);
+}
 static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel, uint32_t src)
 {
     const ork_patch_t *p;
@@ -217,6 +244,8 @@ static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel
     if (!ork_bank.np)
         return;
     p = &ork_bank.patch[patch % ork_bank.np];
+    poly_limit();
+    ++note_clock;
     for (i = 0; i < NVOICE; i++)                /* the same note again: the old one fades as the new one starts */
         if (voice[i].note == note && voice[i].src == src && (voice[i].stage == ST_ATTACK || voice[i].stage == ST_SUSTAIN)) {
             voice[i].stage = ST_RELEASE;
@@ -262,6 +291,7 @@ static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel
         v->stage = ST_ATTACK;
         v->note = (uint8_t)note;
         v->src = (uint8_t)src;
+        v->nid = note_clock;
         v->n2 = (uint8_t)n2;
         v->age = ++voice_clock;
         g = (((vq * ly->gain) >> 8) * in->gain) >> 8;

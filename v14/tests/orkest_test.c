@@ -506,6 +506,20 @@ int main(int argc, char **argv)
         check("velocity -> tone: velocity 40 clearly duller than 127 (brightness under 2/3)", bright[1] < bright[0] * 0.67);
     }
 
+    /* ---- polyphony: 16 notes, last note priority */
+    {
+        unsigned k;
+        use(patch_of("FLUTE"));
+        ork_set.release = 0;
+        for (k = 0; k < 20u; k++) { note(0x90, (uint8_t)(50 + k), 100); render(20); }
+        render(100);
+        check("20 notes held (FLUTE, one layer): 16 sound, the oldest four ended", ork_stat.voices == 16u);
+        check("... the newest is among them", ork_stat.last_note == 69);
+        for (k = 0; k < 20u; k++) note(0x80, (uint8_t)(50 + k), 0);
+        render(2000);
+        use(patch_of("FLUTE"));
+    }
+
     /* ---- ARP: the phrases */
     {
         static uint8_t seq[64];
