@@ -55,6 +55,7 @@ typedef struct {
     uint8_t wk;                  /* the transient knob's share of the swell, Q8 (255: none) */
     uint16_t lp_a;               /* velocity -> tone: its lowpass coefficient, Q15 (32767: open) */
     uint8_t src;                 /* who started it: 0 a key (or MIDI), else ARP's runner + 1 */
+    uint8_t vf, tf;              /* the instrument's share of the LFO's vibrato and tremolo, Q7 (128 = all) */
     uint32_t nid;                /* the note it belongs to (its layers share it): polyphony counts notes */
     uint32_t g_t, g_l;           /* a slide: the transient's and the sustain's steps it starts from */
     uint16_t g_n, g_total;       /* the slide's blocks to go, of */
@@ -67,7 +68,7 @@ static FM1_AUDIO_DATA const uint16_t TONE[128] = {
 static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
-struct ork_settings ork_set = {0, 8, 3, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64, 0, 0, 0, 0,
+struct ork_settings ork_set = {0, 8, 3, 40, 100, 1, 92, 40, 12, 8, 0, 0, 1, 8, 64, 64, 0, 0, 0, 0,
                                {{0, 0, 1, 90, 0, 0, 100, 0}, {255, 39, 1, 90, 1, 0, 100, 0}}, 0, 100, 9131};
 struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0};
 
@@ -216,6 +217,24 @@ static uint8_t layer_inst[NVOICE];               /* the instrument a voice plays
 #define ORK_SEAT_DATA FM1_AUDIO_DATA  /* (the audio ISR: in SRAM) */
 #define ORK_SEAT_CODE FM1_AUDIO_CODE
 #include "orkest_seats.inc"
+/* the LFO where the instrument has it of itself: vibrato (bowed strings most, the solo violin more, flute and oboe,
+ * a little in bassoon and brass, none in clarinet, plucked, struck or short notes) and tremolo (the flute's breath,
+ * a little in oboe, bassoon, trumpet and trombone); Q7, 128 = the LFO's whole depth */
+static FM1_AUDIO_DATA const struct { char name[8]; uint8_t vib, trem; } LFO_INST[] = {
+    {"VIOLINS", 128, 0}, {"VIOLAS", 128, 0}, {"CELLI", 128, 0}, {"BASSES", 90, 0}, {"SOLO", 154, 0}, {"TREMOLO", 40, 0},
+    {"FLUTE", 100, 128}, {"OBOE", 90, 64}, {"BASSOON", 50, 40}, {"HORN", 26, 0}, {"TRUMPET", 50, 26},
+    {"TROMBON", 50, 26}, {"TUBA", 26, 0}};
+static FM1_AUDIO_CODE uint32_t lfo_share(const char *name, int trem)
+{
+    uint32_t i, k;
+    for (i = 0; i < sizeof LFO_INST / sizeof LFO_INST[0]; i++) {
+        for (k = 0; k < 7u && LFO_INST[i].name[k] && name[k] == LFO_INST[i].name[k]; k++)
+            ;
+        if (k == 7u || !LFO_INST[i].name[k])
+            return trem ? LFO_INST[i].trem : LFO_INST[i].vib;
+    }
+    return 0;                                    /* (none: clarinet, harp, pizzicato, spiccato, timpani, glockenspiel) */
+}
 /* slides only where the instrument can: bowed strings (not pizzicato or spiccato) and the trombone */
 static FM1_AUDIO_DATA const char SLIDE_INST[7][8] = {"VIOLINS", "VIOLAS", "CELLI", "BASSES", "SOLO", "TREMOLO", "TROMBON"};
 static FM1_AUDIO_CODE int can_slide(const char *name)
@@ -293,6 +312,8 @@ static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel
         stream_start(&v->t, zt->t_off, zt->t_n, 0, 0, 0, 0, pitch_step(zt->rate, zt->root16, n2));
         if (z->flags & 1u)
             stream_start(&v->l, z->l_off, z->l_n, z->l_ls, z->l_n, z->l_pred, z->l_idx, pitch_step(z->rate, z->root16, n2));
+        v->vf = (uint8_t)lfo_share(in->name, 0);
+        v->tf = (uint8_t)lfo_share(in->name, 1);
         v->g_n = 0;
         if (from >= 0 && glide && can_slide(in->name)) {   /* a slide (where it can): from the old note's pitch */
             int32_t f2 = from + ly->tr;
@@ -794,7 +815,7 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
             uint32_t amt = v->lfo_amt + ork_set.lfo_dstep;
             v->lfo_amt = (uint16_t)(amt > 65535u ? 65535u : amt);
             if (lfo_vib_q8) {                       /* pitch: 1 + cents ln2 / 1200, the first order (<= 1 cent off) */
-                int32_t c8 = (int32_t)(((int64_t)lfo_vib_q8 * lfo_s >> 15) * v->lfo_amt >> 16);
+                int32_t c8 = (int32_t)(((((int64_t)lfo_vib_q8 * lfo_s >> 15) * v->lfo_amt >> 16) * v->vf) >> 7);
                 int32_t d16 = (int32_t)(((int64_t)c8 * 9691) >> 16);
                 stt = (uint32_t)((int64_t)stt + (((int64_t)stt * d16) >> 16));
                 stl = (uint32_t)((int64_t)stl + (((int64_t)stl * d16) >> 16));
@@ -802,7 +823,7 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
             }
             if (lfo_trem_q15) {                     /* level: down by depth x (1 - sine) / 2, glided over the block */
                 g0 = v->trem;
-                g1 = 32767 - (int32_t)((((int64_t)lfo_trem_q15 * ((32767 - lfo_s) >> 1)) >> 15) * v->lfo_amt >> 16);
+                g1 = 32767 - (int32_t)((((((int64_t)lfo_trem_q15 * ((32767 - lfo_s) >> 1)) >> 15) * v->lfo_amt >> 16) * v->tf) >> 7);
                 v->trem = (uint16_t)g1;
                 tremolo = 1;
             }

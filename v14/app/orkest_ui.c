@@ -193,13 +193,13 @@ static const struct { uint16_t ticks; char name[6]; } DIV[] = {
     {384, "4 BAR"}, {192, "2 BAR"}, {96, "1 BAR"}, {48, "1/2"}, {36, "1/4."}, {24, "1/4"}, {18, "1/8."},
     {16, "1/4T"}, {12, "1/8"}, {8, "1/8T"}, {6, "1/16"}, {4, "1/16T"}, {3, "1/32"}};
 #define NDIV (sizeof DIV / sizeof DIV[0])
-static uint8_t lfo_div = 8;        /* 1/8 */
+static uint8_t lfo_div = 9;        /* 1/8T: at 120 BPM 6 Hz, a natural vibrato */
 static uint16_t bpm = 120;
 static void lfo_apply(void)        /* the player's per-block steps for rate and delay */
 {
     uint32_t blocks = (uint32_t)ork_set.lfo_delay * 3u * 44100u / (127u * 128u);
     if (lfo_div >= NDIV)
-        lfo_div = 8;
+        lfo_div = 9;
     if (bpm < 40u || bpm > 300u)
         bpm = 120;
     ork_set.lfo_ticks = DIV[lfo_div].ticks;

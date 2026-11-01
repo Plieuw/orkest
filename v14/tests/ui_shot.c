@@ -37,16 +37,18 @@ int main(void){
   ctl.buttons = 1u << 5; groove_screen_control(); ctl.buttons = 0;   /* LFO pressed: its menu; K2 turned */
   ctl.encoders[3] = 45; groove_screen_control(); ctl.encoders[3] = 0;
   for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-lfo.rgb565");
-  if (!ork_set.lfo_on || ork_set.lfo_vib != 45) { printf("screen test FAIL: LFO menu, K2: vibrato 45, on\n"); return 1; }
+  if (!ork_set.lfo_on || ork_set.lfo_vib != 85) { printf("screen test FAIL: LFO menu, K2: vibrato 40 + 45, on\n"); return 1; }
+  if (!ork_set.lfo_sync) { printf("screen test FAIL: the LFO starts on the tempo\n"); return 1; }
+  ctl.encoders[0] = -1; groove_screen_control(); ctl.encoders[0] = 0;   /* SELECT: FREE */
   ctl.encoders[2] = 3; groove_screen_control(); ctl.encoders[2] = 0;    /* K1 in the menu: the rate, not the sound */
   if (ork_set.patch != 10 || ork_set.lfo_rate != 95) { printf("screen test FAIL: K1 in the LFO menu\n"); return 1; }
   ctl.encoders[0] = 1; groove_screen_control(); ctl.encoders[0] = 0;    /* SELECT: TEMPO */
   ctl.encoders[1] = 8; groove_screen_control(); ctl.encoders[1] = 0;    /* ALGORITHM: 128 BPM */
-  ctl.encoders[2] = 1; groove_screen_control(); ctl.encoders[2] = 0;    /* K1: 1/8 -> 1/8T */
+  ctl.encoders[2] = -1; groove_screen_control(); ctl.encoders[2] = 0;   /* K1: 1/8T -> 1/8 */
   for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-lfo-tempo.rgb565");
-  if (!ork_set.lfo_sync || ork_set.lfo_ticks != 8 || ork_set.lfo_rate != 95 ||
-      ork_set.lfo_inc != (uint32_t)((((uint64_t)1 << 32) * 128u * 128u * 24u) / (44100ull * 60u * 8u))) {
-    printf("screen test FAIL: TEMPO 128 BPM, 1/8T\n"); return 1; }
+  if (!ork_set.lfo_sync || ork_set.lfo_ticks != 12 || ork_set.lfo_rate != 95 ||
+      ork_set.lfo_inc != (uint32_t)((((uint64_t)1 << 32) * 128u * 128u * 24u) / (44100ull * 60u * 12u))) {
+    printf("screen test FAIL: TEMPO 128 BPM, 1/8\n"); return 1; }
   ctl.encoders[0] = -1; groove_screen_control(); ctl.encoders[0] = 0;   /* SELECT: FREE again */
   if (ork_set.lfo_sync || ork_set.lfo_inc != LFO_INC[95]) { printf("screen test FAIL: FREE again\n"); return 1; }
   ctl.buttons = 1u << 8; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* HOME: back */
@@ -54,7 +56,7 @@ int main(void){
   if (ork_set.patch != 11) { printf("screen test FAIL: HOME closes the LFO menu\n"); return 1; }
   ctl.encoders[2] = -1; groove_screen_control(); ctl.encoders[2] = 0;
   ctl.buttons = 1u << 5; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* menu: vibrato to 0 */
-  ctl.encoders[3] = -127; groove_screen_control(); ctl.encoders[3] = 0;
+  ctl.encoders[3] = -127; ctl.encoders[4] = -127; groove_screen_control(); ctl.encoders[3] = ctl.encoders[4] = 0;
   ctl.buttons = 1u << 5; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* LFO again: back */
   if (ork_set.lfo_on) { printf("screen test FAIL: vibrato and tremolo at 0: LFO off\n"); return 1; }
   if (ork_bank.np != 24 || ork_set.patch != 10 || strcmp(ork_bank.patch[10].name, "HARP")) { printf("screen test FAIL: the bank changed under the screen\n"); return 1; }
