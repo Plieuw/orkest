@@ -42,6 +42,16 @@ jobs:
           ls -la out/ || true
           cat fm1_open/build/dx7/package-report.json || true
           grep -E "^\s*\.(text|data|ram0_data|cache_ram_data|bss|ram0_bss)\s" fm1_open/build/dx7/sdk.map | head || true
+      - name: Where the space goes
+        if: always()
+        run: |
+          B=fm1_open/build/dx7; T=~/.jieli/toolchain/pi32v2/bin
+          $T/objdump -h $B/sdk.elf | head -40
+          echo "== largest symbols in flash (.text, XIP 0x02...)"
+          $T/nm --print-size --size-sort -r $B/sdk.elf | awk '$1 ~ /^020/' | head -40
+          echo "== app objects: their share"
+          $T/nm --print-size --size-sort -r $B/sdk.elf | awk '$1 ~ /^020/ {s+=strtonum("0x"$2)} END {print "flash symbols total", s}'
+          for o in $B/obj/*.obj; do printf "%8d %s\n" $(stat -c %s $o) $(basename $o); done | sort -rn | head -20
       - uses: actions/upload-artifact@v4
         if: always()
         with:
