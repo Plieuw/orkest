@@ -576,6 +576,32 @@ int main(int argc, char **argv)
             printf("  GALLOP velocities %u .. %u (key 100)\n", lo, hi);
             check("ARP velocity: GALLOP's notes soft and accented (spread > 30)", q < ORK_NPHRASE && hi - lo > 30u);
         }
+        {   /* a velocity pattern apart from the phrase: ACCENT 3 (120 70 70) over PRELUDE C (8 notes) */
+            static const uint8_t WANT_FREE[10] = {120, 70, 70, 120, 70, 70, 120, 70, 70, 120};
+            static const uint8_t WANT_LOOP[10] = {120, 70, 70, 120, 70, 70, 120, 70, 120, 70};
+            uint8_t got[10];
+            unsigned b, nn, pass, ok[2] = {1, 1};
+            int lastn;
+            ork_set.arp_phrase = 0; ork_set.velo_pat = 3; ork_set.velo_depth = 100; ork_set.velo_human = 0;
+            for (pass = 0; pass < 2u; pass++) {
+                ork_set.velo_reset = (uint8_t)pass;
+                render(10);
+                (void)ork_post(0, 0x90, 60, 100);
+                for (b = 0, nn = 0, lastn = -1; b < 1300u * 441u / 1280u && nn < 10u; b++) {
+                    unsigned before = ork_stat.last_note;
+                    ork_stat.last_note = 255;            /* (to see each note on, repeated pitches too) */
+                    orkest_render(blk);
+                    if (ork_stat.last_note != 255) { got[nn++] = ork_stat.last_vel; lastn = ork_stat.last_note; }
+                    else ork_stat.last_note = (uint8_t)before;
+                }
+                (void)ork_post(0, 0x80, 60, 0); render(1500);
+                for (b = 0; b < 10u; b++) if (b >= nn || got[b] != (pass ? WANT_LOOP : WANT_FREE)[b]) ok[pass] = 0;
+                (void)lastn;
+            }
+            check("velocity pattern ACCENT 3 over an 8-note phrase, FREE: 120 70 70 runs on across the repeat", ok[0]);
+            check("... LOOP: from its start with each repeat", ok[1]);
+            ork_set.velo_pat = 0; ork_set.velo_reset = 0;
+        }
         ork_set.arp_on = 1; ork_set.arp_mode = 0;
         for (t = 0; t < ORK_NPHRASE; t++) {         /* every phrase, mono, two keys: sane, one voice, ends when let go */
             ork_set.arp_phrase = (uint8_t)t;

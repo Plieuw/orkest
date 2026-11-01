@@ -108,6 +108,10 @@ struct ork_settings {
     /* SEQ: the scale ARP keeps to (orkest_scales.inc, 0 off) and its root (0 C .. 11 B); a phrase's notes outside it
      * move to the nearest note in it (the lower one at a tie) */
     volatile uint8_t scale, scale_root;
+    /* ARP velocity, apart from the phrase: velo_pat (orkest_velo.inc; 0 the phrase's own), one step a note played;
+     * velo_depth 0..100 % of the pattern; velo_human 0..100 (a random +-0..30); velo_reset 0 FREE (runs on over the
+     * phrase's repeats), 1 LOOP (from its start with each repeat) */
+    volatile uint8_t velo_pat, velo_depth, velo_human, velo_reset;
     volatile uint32_t arp_inc;
 };
 /* a phrase's note: start (ticks, 24 a quarter note), length (ticks), interval from the key (semitones), velocity */

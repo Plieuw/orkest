@@ -57,7 +57,7 @@ typedef struct {
 static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
-struct ork_settings ork_set = {0, 8, 50, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64, 0, 0, 1, 90, 0, 0, 0, 9131};
+struct ork_settings ork_set = {0, 8, 50, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64, 0, 0, 1, 90, 0, 0, 0, 0, 100, 0, 0, 9131};
 struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0};
 
 /* ------------------------------------------------------------ events --- */
@@ -337,11 +337,34 @@ static FM1_AUDIO_CODE int32_t scale_snap(int32_t n)
     }
     return n;
 }
+#define ORK_VELO_STEPS
+#include "orkest_velo.inc"
+_Static_assert(sizeof VELO_STEP == 132, "velocity patterns: VELO's offsets");
+static uint32_t velo_rng = 0x2545F491u;
+/* the velocity of the phrase's next note: the key's, shaped by the phrase or the chosen pattern (its next step) */
+static FM1_AUDIO_CODE uint32_t phrase_vel(uint32_t key_vel, uint32_t own, uint16_t *step)
+{
+    uint32_t pat = ork_set.velo_pat < ORK_NVELO ? ork_set.velo_pat : 0u;
+    int32_t v = (int32_t)own;
+    if (pat) {
+        v = VELO_STEP[VELO[pat].first + *step % VELO[pat].n];
+        *step = (uint16_t)((*step + 1u) % (VELO[pat].n * 16u));   /* (a multiple of every length: no jump) */
+    }
+    v = 100 + (v - 100) * (int32_t)(ork_set.velo_depth > 100u ? 100u : ork_set.velo_depth) / 100;
+    if (ork_set.velo_human) {                    /* humanize: +- up to 30 */
+        int32_t span = (int32_t)(ork_set.velo_human > 100u ? 100u : ork_set.velo_human) * 30 / 100;
+        velo_rng = velo_rng * 1664525u + 1013904223u;
+        v += (int32_t)((velo_rng >> 16) % (uint32_t)(2 * span + 1)) - span;
+    }
+    v = (int32_t)key_vel * v / 100;
+    return v < 1 ? 1u : v > 127 ? 127u : (uint32_t)v;
+}
 #define NRUN 1
 #define RUN_NOTES 1
 typedef struct {
     uint8_t key, vel, on, stop;                  /* stop: let go (HOLD), it ends; ONCE: it ends at its end */
     uint16_t idx;                                /* the next note in the phrase */
+    uint16_t vstep;                              /* the velocity pattern's next step */
     uint32_t pos;                                /* ticks into the phrase, Q16 */
     uint8_t nn, note[RUN_NOTES];                 /* its notes sounding, the ticks (Q16) each has left */
     int32_t left[RUN_NOTES];
@@ -370,6 +393,7 @@ static FM1_AUDIO_CODE void run_start(uint32_t key, uint32_t vel)
     r->stop = 0;
     r->idx = 0;
     r->pos = 0;
+    r->vstep = 0;
 }
 static FM1_AUDIO_CODE void run_release(uint32_t key)   /* its key let go: HOLD stops, ONCE and LATCH play on */
 {
@@ -428,6 +452,8 @@ static FM1_AUDIO_CODE void phrases(void)
                 }
                 r->pos -= (uint32_t)ph->len << 16;
                 r->idx = 0;
+                if (ork_set.velo_reset)
+                    r->vstep = 0;
             }
             if (r->idx >= ph->n || ((uint32_t)PEV[ph->first + r->idx].at << 16) > r->pos)
                 break;
@@ -437,10 +463,7 @@ static FM1_AUDIO_CODE void phrases(void)
                 if (n < 0 || n > 127)
                     continue;
                 run_quiet(r);                    /* one note at a time */
-                {   /* the key's velocity, shaped by the phrase's (100 = as played) */
-                    uint32_t v = (uint32_t)r->vel * e->vel / 100u;
-                    note_on((uint32_t)n, v < 1u ? 1u : v > 127u ? 127u : v);
-                }
+                note_on((uint32_t)n, phrase_vel(r->vel, e->vel, &r->vstep));
                 r->note[r->nn] = (uint8_t)n;
                 r->left[r->nn] = (int32_t)(((uint32_t)e->len * ork_set.arp_gate << 16) / 100u);
                 r->nn++;
