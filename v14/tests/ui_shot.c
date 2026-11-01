@@ -75,10 +75,10 @@ int main(void){
   ork_stat.last_note = 69;
   for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-main-arp.rgb565");
   if (!ork_set.arp_on) { printf("screen test FAIL: ARP off after HOME\n"); return 1; }
-  ctl.buttons = 1u << 11; groove_screen_control(); ctl.buttons = 0;   /* SEQ: K1 root A (-3), K2 MINOR, no SAVE */
+  ctl.buttons = 1u << 3; groove_screen_control(); ctl.buttons = 0;    /* SCL: K1 root A (-3), K2 MINOR, no SAVE */
   ctl.encoders[2] = -3; ctl.encoders[3] = 2; groove_screen_control(); ctl.encoders[2] = ctl.encoders[3] = 0;
   for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-scale.rgb565");
-  ctl.buttons = 1u << 11; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* SEQ again: closed, kept */
+  ctl.buttons = 1u << 11; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* SEQ: to PARTS, the scale kept */
   ork_set.scale = 0; ork_set.scale_root = 0;
   groove_screen_init();                                                 /* a power cycle */
   if (ork_set.scale != 2 || ork_set.scale_root != 9) { printf("screen test FAIL: scale kept (%d %d)\n", ork_set.scale, ork_set.scale_root); return 1; }

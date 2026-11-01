@@ -364,7 +364,7 @@ static int scale_store(void)
 static uint32_t prev_keys, blocked_keys, prev_buttons, led_shown, event_until, splash_until, frame_ms;
 static uint8_t lfo_menu;           /* the LFO menu is open: the knobs set the LFO */
 static uint8_t arp_menu;           /* the ARP menu is open: the knobs choose and shape the phrase */
-static uint8_t scale_menu;         /* the SEQ menu: 1 the ARP's scale, 2 the PARTS (four sounds, each its phrase) */
+static uint8_t scale_menu;         /* 1 the SCL menu: the ARP's scale; 2 the SEQ menu: PARTS (four sounds, each its phrase) */
 static uint8_t part_field;         /* PARTS: what K1..K4 set: 0 sound, 1 phrase, 2 velocity, 3 octave */
 static uint8_t scale_dirty;        /* changed, not yet stored: when the menu closes, or 5 s after the last turn */
 static uint32_t scale_turned;
@@ -407,7 +407,7 @@ static void leds(void)
         want |= 1u << 29;
     if (ork_set.arp_on)
         want |= 1u << 30;
-    if (ork_set.scale)
+    if (ork_set.parts_on)
         want |= 1u << 31;
     if (octave < 0)
         want |= 1u << 27;
@@ -426,7 +426,7 @@ static void leds(void)
     if (diff & (1u << 30))
         fm1_led_set(B_ARP, ork_set.arp_on);
     if (diff & (1u << 31))
-        fm1_led_set(B_SEQ, ork_set.scale != 0u);
+        fm1_led_set(B_SEQ, ork_set.parts_on);
     led_shown = want;
 }
 
@@ -617,7 +617,7 @@ static void draw(uint32_t now)
     }
     line(L_EVENT, (int32_t)(now - event_until) < 0 ? event : lfo_menu ? "SELECT SYNC  ALGO BPM  LFO BACK"
          : env_menu ? "ENV OR HOME BACK" : arp_menu ? arp_hint() : scale_menu == 2u ? "SELECT ON OFF  ALGO FIELD  SEQ BACK"
-         : scale_menu ? "THE ARP KEEPS TO IT   SEQ PARTS" : "",
+         : scale_menu ? "THE ARP KEEPS TO IT   SCL BACK" : "",
          (int32_t)(now - event_until) < 0 ? AMBER : DIM);
     p = put_str(b, "VOICES ");
     p = put_int(p, ork_stat.voices);
@@ -692,12 +692,13 @@ void groove_screen_control(void)
             octave = octave < -3 ? -3 : octave > 3 ? 3 : octave;
         } else if (k == B_SAVE)
             say(settings_save() == 0 ? "SAVED" : "SAVE FAILED", now);
-        else if (k == B_LFO || k == B_ENV || k == B_ARP || k == B_SEQ ||
+        else if (k == B_LFO || k == B_ENV || k == B_ARP || k == B_SEQ || k == B_SCL ||
                  (k == B_HOME && (lfo_menu || env_menu || arp_menu || scale_menu))) {
             lfo_menu = k == B_LFO ? !lfo_menu : 0;
             env_menu = k == B_ENV ? !env_menu : 0;
             arp_menu = k == B_ARP ? (uint8_t)((arp_menu + 1u) % 3u) : 0;   /* ARP: the phrase, its velocity, closed */
-            scale_menu = k == B_SEQ ? (uint8_t)((scale_menu + 1u) % 3u) : 0;   /* SEQ: scale, parts, closed */
+            scale_menu = k == B_SCL ? (scale_menu == 1u ? 0u : 1u)       /* SCL: the scale */
+                       : k == B_SEQ ? (scale_menu == 2u ? 0u : 2u) : 0u;   /* SEQ: the parts */
             if (scale_menu != 1u && scale_dirty) {
                 scale_dirty = 0;
                 (void)scale_store();
@@ -852,6 +853,13 @@ void groove_screen_control(void)
         ork_set.master = (uint8_t)(master_adc * 127u / 1023u);
     }
     leds();
+    {   /* SCL: lit while a scale is chosen */
+        static int8_t scl_shown = -1;
+        if (scl_shown != (ork_set.scale != 0u)) {
+            scl_shown = (int8_t)(ork_set.scale != 0u);
+            fm1_led_set(B_SCL, scl_shown);
+        }
+    }
     if ((int32_t)(now - splash_until) < 0)
         return;
     if (splash_until) {                             /* the splash is over: the whole screen once */
