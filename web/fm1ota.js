@@ -184,8 +184,19 @@ export class Updater {
       if (!r) continue;
       last = Date.now();
       if (r.addr === 0xE0000000 || r.addr === 0xF0000000) {
-        link.send(response(r.addr, [...new TextEncoder().encode("success"), 0]));
-        if (r.addr === finishAddr) return { served, finished: true };
+        const ok = [...new TextEncoder().encode("success"), 0];
+        link.send(response(r.addr, ok, r.fl));   // its first byte echoed, as for data
+        if (r.addr === finishAddr) {
+          // as M-VAVE's WebUpdate.js: stay a while and answer the finish request again if the device repeats it
+          // (a lost answer, and the device would give up the update and stay where it is)
+          const end = Date.now() + 1500;
+          while (Date.now() < end && !link.lost) {
+            const again = await link.read(Math.min(100, end - Date.now()));
+            const ra = again && parseRequest(again);
+            if (ra && ra.addr === finishAddr) link.send(response(ra.addr, ok, ra.fl));
+          }
+          return { served, finished: true };
+        }
         continue;
       }
       if (r.len > MAXDATA || r.addr + r.len > image.length) throw fail("badreq", `bad request ${r.addr.toString(16)}+${r.len}`);
