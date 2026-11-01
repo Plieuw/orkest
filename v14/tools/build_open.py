@@ -12,6 +12,7 @@ sdk/Package.cs (the .fwsc writer), so no Windows, PowerShell or .NET is needed.
 import argparse
 import hashlib
 import json
+import os
 import re
 import struct
 import subprocess
@@ -269,6 +270,8 @@ def main():
              "-fmessage-length=0", "-cl-single-precision-constant", "-mllvm", "-pi32v2-large-program=true",
              "-D__GCC_PI32V2__", "-O2"] + (["-flto"] if lto else [])
     flags += [f"-I{root / d}" for d in include]
+    if os.environ.get("ORKEST_BUILD"):             # shown on the FM1's screen (orkest_ui.c)
+        flags.append(f'-DORKEST_BUILD="{re.sub(r"[^A-Za-z0-9.-]", "", os.environ["ORKEST_BUILD"])}"')
     sources = sorted(p for p in (root / "app").rglob("*")
                      if p.suffix in (".c", ".S") and "synth" not in p.relative_to(root / "app").parts[:1])
     objs = []

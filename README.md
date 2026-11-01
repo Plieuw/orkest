@@ -4,9 +4,13 @@ Eigen firmware voor de M-VAVE FM-1, gebouwd op de FM-1 Basis: een uitgeklede ver
 [Felucca](https://github.com/hugelton/Felucca) van Hügelton Instruments. De hardwarelaag, het update-pad en de
 veiligheidsnetten komen uit Felucca; de rest is van Orkest.
 
-## Installeren
+> **Nieuw: Orkest V14.** Dezelfde orkestklanken op M-VAVE's eigen open firmware (FM1 Open), met Bluetooth- en
+> USB-MIDI: zie [v14/](v14/README.md). De installer op https://plieuw.github.io/orkest/ is nu die van V14; deze
+> Felucca-versie staat op https://plieuw.github.io/orkest/klassiek/.
 
-**Webinstaller (Chrome of Edge):** https://plieuw.github.io/orkest/ — sluit de FM-1 met USB aan en druk op Installeren.
+## Installeren (klassiek)
+
+**Webinstaller (Chrome of Edge):** https://plieuw.github.io/orkest/klassiek/ — sluit de FM-1 met USB aan en druk op Installeren.
 
 Elke push naar `main` bouwt automatisch een nieuwe firmware (GitHub Actions, `.github/workflows/build.yml`), draait
 de host-tests en zet de installer met die build op GitHub Pages. De versie is `VERSION` plus het buildnummer

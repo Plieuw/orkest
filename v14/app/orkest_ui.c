@@ -246,7 +246,11 @@ static void draw(uint32_t now)
     unsigned st = ork_bank_state(), note = ork_stat.last_note;
     static const char *const NOTE[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
     p = put_str(b, "ORKEST ");
+#ifdef ORKEST_BUILD
+    p = put_str(p, ORKEST_BUILD);
+#else
     p = put_str(p, FM1_RELEASE_VERSION);
+#endif
     if (fm1_device_usb_connected())
         put_str(p, "  USB");
     line(L_TITLE, b, DIM);
@@ -314,7 +318,11 @@ void groove_screen_init(void)
     if (ork_bank_state() == ORK_BANK_OK && ork_set.patch >= ork_bank.np)
         patch_select(0);
     draw_text(96, 4, 1, "ORKEST", ACCENT);
+#ifdef ORKEST_BUILD
+    draw_text(136, 1, 1, ORKEST_BUILD, DIM);
+#else
     draw_text(136, 1, 1, FM1_RELEASE_VERSION, DIM);
+#endif
     splash_until = fm1_millis() + 700u;
     for (k = 0; k < KEYS; k++)
         key_note[k] = 0xFF;

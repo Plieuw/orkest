@@ -370,3 +370,16 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
     ork_stat.voices = (uint8_t)busy;
     return 0;
 }
+
+#ifdef FM1_HOST_TEST
+/* tests/orkest_test.c: the sum of a zone's first `samples` samples as a voice decodes them (loops included) */
+long long ork_test_decode(unsigned zone, unsigned samples)
+{
+    voice_t v = {0};
+    long long sum = 0;
+    v.z = &ork_bank.zone[zone];
+    while (samples--)
+        sum += adpcm_next(&v);
+    return sum;
+}
+#endif

@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-only
-# Orkest: build the firmware, run the host tests and publish the web installer on GitHub Pages.
-#   push to main      -> build + tests + installer site on Pages (package orkest-X.Y-bN.fwsc)
+# Orkest: build the firmware, run the host tests and publish the web installers on GitHub Pages.
+#   Orkest V14 (v14/: M-VAVE FM1 Open + the orchestra) -> the site's root
+#   Orkest klassiek (the Felucca-based firmware in the repo root) -> /klassiek/
+#   push to main      -> build + tests + installer site on Pages
 #   pull request      -> build + tests only
 #   Actions tab       -> "Run workflow" does the same as a push
 # The version is X.Y from the VERSION file plus the run number, e.g. 0.1-b12 (shown on the FM-1 screen).
@@ -101,10 +103,26 @@ jobs:
       - name: Host tests
         run: AC79_SDK="$HOME/ac79-sdk" tests/run_tests.sh
 
+      # ---- Orkest V14 (M-VAVE FM1 Open + the orchestra)
+      - name: V14 version
+        id: v14
+        run: echo "version=$(tr -d ' \n\r' < v14/VERSION)-b${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: V14 host tests
+        run: v14/tests/run_tests.sh
+
+      - name: V14 firmware and sound bank
+        env:
+          ORKEST_BUILD: ${{ steps.v14.outputs.version }}
+        run: |
+          python3 v14/tools/gen_bank.py v14/build/orkest-bank.bin
+          python3 v14/tools/build_open.py v14 ~/.jieli/toolchain --out v14/build/orkest-v14.fwsc
+
       - name: Installer site
         run: |
+          python3 v14/tools/make_site_v14.py v14/build/orkest-v14.fwsc v14/build/orkest-bank.bin "${{ steps.v14.outputs.version }}" site
           v="${{ steps.ver.outputs.version }}"
-          python3 web/make_site.py "build/felucca-$v.fwsc" "$v" site
+          python3 web/make_site.py "build/felucca-$v.fwsc" "$v" site/klassiek
           cp "build/felucca-$v.fwsc" "build/release-$v/orkest-$v.fwsc"
 
       - name: Upload firmware
@@ -115,6 +133,9 @@ jobs:
             build/release-${{ steps.ver.outputs.version }}/
             build/host/orkest-demo.wav
             build/host/ui/*.png
+            v14/build/orkest-v14.fwsc
+            v14/build/orkest-bank.bin
+            v14/build/host/orkest-v14-demo.wav
 
       - name: Upload site
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -131,7 +152,7 @@ jobs:
       id-token: write
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}webapp/installer/
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - id: deploy
         uses: actions/deploy-pages@v4

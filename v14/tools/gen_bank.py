@@ -79,6 +79,16 @@ def main(argv):
         for i in range(0, len(data), 40):
             lines.append("    " + ",".join(map(str, data[i:i + 40])) + ",")
         lines.append("};")
+        # per zone: the sum of what gen_orkest.py decodes (its n samples and, for a loop, one more pass of it)
+        hdr = struct.unpack_from("<IHHIII4H5I", data, 0)
+        zones_off, data_off = hdr[10], hdr[13]
+        sums = []
+        for i in range(nz):
+            off, n, ls, le, rate, root16, pred, idx, lo, hi, looped = struct.unpack_from("<5I2h4B", data, zones_off + 28 * i)
+            d = data[data_off + off:]
+            y = g.ima_decode(d, n, ls, le, (pred, idx), total=n + (le - ls)) if looped else g.ima_decode(d, n)
+            sums.append(int(y.sum()))
+        lines.append(f"static const long long ORK_BANK_CHECK[{nz}] = {{" + ",".join(f"{v}LL" for v in sums) + "};")
         h.write_text("\n".join(lines) + "\n")
     print(f"bank: {len(data)} B ({nz} zones, {ni} instruments, {np_} patches, {nb} B ADPCM) -> {out}")
 
