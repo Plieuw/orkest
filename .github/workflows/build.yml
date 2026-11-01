@@ -99,7 +99,7 @@ jobs:
           cp "build/felucca-${{ steps.ver.outputs.version }}.fwsc" build/felucca.fwsc
 
       - name: Host tests
-        run: tests/run_tests.sh
+        run: AC79_SDK="$HOME/ac79-sdk" tests/run_tests.sh
 
       - name: Installer site
         run: |
