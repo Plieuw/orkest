@@ -32,6 +32,7 @@ natuurlijk uit (one-shot).
 | MASTER | volume |
 | MIDI in (USB en TRS) | note on/off met velocity op elk kanaal, CC 123 = all notes off |
 | USB | class-compliant MIDI + USB-audio-ingang (opnemen in je DAW) |
+| GLO | tweede core aan/uit (standaard aan; geldt na SAVE en herstart). Onderaan het scherm: `2 CORES` of `1 CORE` |
 | SELECT, ALGORITHM, overige knoppen | worden op het scherm getoond: vrij voor nieuwe functies |
 | OCT- + OCT+ 5 s ingedrukt | UBOOT (update-modus) |
 
@@ -56,6 +57,14 @@ aangehouden violen: de transient van het ene instrument op de sustain van het an
 - Geheugen: de firmware heeft ~568 KB voor code + samples; de samples mogen nu 420 KB gebruiken (nu ~390 KB:
   60 zones, 38 s audio). `gen_orkest.py --wav DIR` schrijft elke zone uit zoals de FM-1 hem afspeelt (met loops).
 - `firmware/src/synth.c`: de speler (ADPCM, lagen, envelope, 24 stemmen, galm).
+
+### Tweede core
+
+De AC79 in de FM-1 heeft twee cores. Orkest start de tweede bij het opstarten en laat hem per audioblok de helft
+van de stemmen rekenen. De eerste core rekent de andere helft plus de galm. Op sommige FM-1's leest de tweede core
+af en toe verkeerde data (zie [fm1-x0x#10](https://github.com/charlesvestal/fm1-x0x/issues/10)): zodra dat één keer
+gebeurt of hij niet op tijd klaar is, zet de firmware hem voorgoed stil en rekent alles op één core (hooguit één
+tikje). Ging de vorige keer opstarten mis, dan start hij niet. Met GLO + SAVE + herstart blijft hij uit.
 
 ## Waar begin je
 

@@ -7,6 +7,7 @@
  * glockenspiel) play their excerpt to the end and ignore note off. A patch (KNOB 1) is one instrument or up to
  * ORK_MAXL layered, each layer with its own key range, transposition, level and place on the stage (pan).
  * After the voices: a small stereo room (Freeverb-style: 4 damped combs + 2 allpasses per side), KNOB 4.
+ * With the second core on, half the voices render there (synth_render).
  *
  *   synth_note_on(note, vel)    start a note (MIDI note number, velocity 1..127): one voice per sounding layer
  *   synth_note_off(note)        release the voices of that note (one-shots ring on)
@@ -258,13 +259,12 @@ static int32_t soft_clip(int32_t x)              /* Q15 in +-1.5 -> +-1: x - 4/2
     return x - (int32_t)(c * 4 / 27);
 }
 
-static void synth_render(int32_t *out, uint32_t n)
+/* the voices first, first + stride, ... added into out (n stereo frames): -> how many sounded. Each voice is
+ * touched by one core only (synth_render: core 0 the even slots, core 1 the odd ones) */
+static uint32_t render_voices(int32_t *out, uint32_t n, uint32_t first, uint32_t stride)
 {
     uint32_t i, k, busy = 0;
-    int32_t m = (int32_t)sys.master_q12, wet = (int32_t)sys.reverb * 258;   /* Q15 */
-    for (i = 0; i < 2u * n; i++)
-        out[i] = 0;
-    for (k = 0; k < NVOICE; k++) {
+    for (k = first; k < NVOICE; k += stride) {
         voice_t *v = &voice[k];
         if (v->stage == ST_OFF)
             continue;
@@ -305,6 +305,46 @@ static void synth_render(int32_t *out, uint32_t n)
         if (v->ended && v->s0 == 0 && v->s1 == 0)
             v->stage = ST_OFF;                   /* a one-shot played to its end */
     }
+    return busy;
+}
+
+/* ------------------------------------------------------ second core --- */
+/* With the second core running (main.c starts it at power-on, hal/fm1_cpu1.h), each block's odd voice slots render
+ * on it into c1_buf while core 0 renders the even ones; core 0 waits for it, then adds. If it ever reads a wrong job
+ * or stalls, the HAL holds it for good and core 0 renders everything (one glitch at most). */
+#if defined(FELUCCA_CPU2) && FELUCCA_CPU2
+static int32_t c1_buf[2u * CTL] __attribute__((aligned(64)));
+static uint32_t c1_busy;
+static void c1_job(uint32_t n)                   /* runs on core 1 */
+{
+    uint32_t i;
+    for (i = 0; i < 2u * n; i++)
+        c1_buf[i] = 0;
+    c1_busy = render_voices(c1_buf, n, 1u, 2u);
+}
+static uint32_t synth_cores(void) { return fm1_c1_on ? 2u : 1u; }
+#else
+static uint32_t synth_cores(void) { return 1u; }
+#endif
+
+static void synth_render(int32_t *out, uint32_t n)
+{
+    uint32_t i, busy;
+    int32_t m = (int32_t)sys.master_q12, wet = (int32_t)sys.reverb * 258;   /* Q15 */
+    for (i = 0; i < 2u * n; i++)
+        out[i] = 0;
+#if defined(FELUCCA_CPU2) && FELUCCA_CPU2
+    if (n <= CTL && fm1_cpu1_run(c1_job, n)) {
+        busy = render_voices(out, n, 0u, 2u);
+        if (fm1_cpu1_wait() == 0) {
+            for (i = 0; i < 2u * n; i++)
+                out[i] += c1_buf[i];
+            busy += c1_busy;
+        } else
+            busy += render_voices(out, n, 1u, 2u);   /* it stopped: from now on core 0 alone */
+    } else
+#endif
+        busy = render_voices(out, n, 0u, 1u);
     for (i = 0; i < n; i++) {
         int32_t l = out[2u * i], r = out[2u * i + 1u];
         if (wet) {

@@ -4,7 +4,7 @@
  *   KNOB 1 / PRESETS  the sound (patch)       OCT- / OCT+   octave -3..+3
  *   KNOB 2  attack                            SAVE          the settings into flash (restored at power-on)
  *   KNOB 3  release                           MASTER pot    volume
- *   KNOB 4  room (reverb)
+ *   KNOB 4  room (reverb)                     GLO           the second core on / off (after SAVE and a restart)
  *   Choosing a sound sets attack and release to that sound's own; turn KNOB 2 / 3 after to change them.
  *   SELECT, ALGORITHM and the other buttons: shown on the screen, free for your own use.
  *
@@ -20,8 +20,11 @@ static const char *const NOTE_NAME[12] = {"C", "C#", "D", "D#", "E", "F", "F#", 
 typedef struct {
     uint32_t magic;
     int8_t octave;
-    uint8_t patch, attack, release, reverb, rsv[3];
+    uint8_t patch, attack, release, reverb;
+    uint8_t one_core;              /* 1 = the second core stays off (0 in records from before it: on) */
+    uint8_t rsv[2];
 } settings_t;
+static uint8_t ui_one_core;        /* the setting (main.c reads it at power-on, before the audio) */
 
 static void settings_boot(void)    /* power-on, before the audio */
 {
@@ -37,6 +40,7 @@ static void settings_boot(void)    /* power-on, before the audio */
         sys.attack = (uint8_t)(s.attack & 127u);
         sys.release = (uint8_t)(s.release & 127u);
         sys.reverb = (uint8_t)(s.reverb & 127u);
+        ui_one_core = s.one_core & 1u;
     }
 }
 
@@ -52,6 +56,7 @@ static int settings_save(void)     /* 0 = saved */
     s.attack = sys.attack;
     s.release = sys.release;
     s.reverb = sys.reverb;
+    s.one_core = ui_one_core;
     return st_save(OBJ_SETTINGS, &s, sizeof s);
 }
 
@@ -164,6 +169,7 @@ static void ui_draw(void)
     ui_cat(b, sizeof b, "%  VOICES ");
     fmt_int(v, sys.voices);
     ui_cat(b, sizeof b, v);
+    ui_cat(b, sizeof b, synth_cores() > 1u ? "  2 CORES" : "  1 CORE");
     ui_line(L_STATUS, b, T_MID);
     ui_force = 0;
 }
@@ -237,6 +243,10 @@ static void ui_input(void)
             break;
         case B_SAVE:
             ui_say(settings_save() == 0 ? "SAVED" : flash_ok ? "SAVE FAILED" : "NO FLASH");
+            break;
+        case B_GLO:                                     /* takes effect at the next power-on (it starts at boot) */
+            ui_one_core ^= 1u;
+            ui_say(ui_one_core ? "CORE 2 OFF: SAVE+REBOOT" : "CORE 2 ON: SAVE+REBOOT");
             break;
         default:
             str_cpy(t, "BUTTON ", sizeof t);

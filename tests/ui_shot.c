@@ -128,6 +128,12 @@ int main(int argc, char **argv)
     ui_draw();
     bad |= shot(dir, "playing");
 
+    edges = btn_bit(B_GLO);              /* the second core off (after SAVE and a restart) */
+    ui_input();
+    if (!ui_one_core) {
+        printf("GLO: the second core off FAIL\n");
+        bad = 1;
+    }
     edges = btn_bit(B_SAVE);
     ui_input();
     ui_draw();
@@ -141,10 +147,10 @@ int main(int argc, char **argv)
     bad |= shot(dir, "low");
 
     {   /* settings: SAVE wrote them, a power-on reads them back */
-        sys.octave = 0; sys.patch = 0; sys.attack = 0; sys.release = 0; sys.reverb = 0;
+        sys.octave = 0; sys.patch = 0; sys.attack = 0; sys.release = 0; sys.reverb = 0; ui_one_core = 0;
         settings_boot();
         if (sys.octave != 2 || sys.patch != ORK_NPATCH - 1 || sys.attack != 127 || sys.release != 127 ||
-            sys.reverb != 127) {
+            sys.reverb != 127 || !ui_one_core) {
             printf("settings round trip FAIL\n");
             bad = 1;
         }

@@ -37,6 +37,27 @@ static void midi_in(uint32_t st, uint32_t d1, uint32_t d2)
     mi_w++;
 }
 
+/* the second core, as hal/fm1_cpu1.h behaves to synth.c: a job runs at once (the host has one core); c1_fail = a
+ * unit that reads a wrong job: it never runs it, the wait fails and the core is held from then on */
+#define FELUCCA_CPU2 1
+static uint8_t fm1_c1_on = 1;
+static int c1_fail;
+static int fm1_cpu1_run(void (*fn)(uint32_t), uint32_t arg)
+{
+    if (!fm1_c1_on)
+        return 0;
+    if (!c1_fail)
+        fn(arg);
+    return 1;
+}
+static int fm1_cpu1_wait(void)
+{
+    if (c1_fail) {
+        fm1_c1_on = 0;
+        return -1;
+    }
+    return 0;
+}
 #include "../firmware/src/synth.c"
 #include "../firmware/src/keys.c"
 
@@ -331,6 +352,41 @@ int main(int argc, char **argv)
     fm1_in.notes = 0;
     run_ms(4000);
     check("... all released", sounding() == 0);
+
+    /* the second core: TUTTI chords with the voices split over two cores sound exactly as on one; and a second core
+     * that fails half-way (held from then on) leaves the sound as it was */
+    {
+        static int32_t one[2 * CTL * 400], two[2 * CTL * 400];
+        static const uint8_t CH[4] = {48, 55, 64, 67};
+        uint32_t b, i, same = 1, mode;
+        use_patch(patch_of("TUTTI"));
+        for (mode = 0; mode < 3; mode++) {      /* 0: one core; 1: two; 2: two, the second failing at block 150 */
+            int32_t *o = mode ? two : one;
+            synth_kill();
+            fm1_c1_on = mode != 0;
+            c1_fail = 0;
+            for (i = 0; i < 4; i++)
+                synth_note_on(CH[i], 100);
+            for (b = 0; b < 400; b++) {
+                if (b == 200)
+                    for (i = 0; i < 4; i++)
+                        synth_note_off(CH[i]);
+                if (mode == 2 && b == 150)
+                    c1_fail = 1;
+                synth_render(buf, CTL);
+                memcpy(o + 2 * CTL * b, buf, sizeof buf);
+            }
+            if (mode && memcmp(one, two, sizeof one))
+                same = 0;
+            if (mode == 1)
+                check("2 cores: the cores report 2", synth_cores() == 2);
+        }
+        check("2 cores: the same output as one, sample for sample", same);
+        check("... a second core that fails mid-way: held, the sound unchanged", same && synth_cores() == 1);
+        fm1_c1_on = 1;
+        c1_fail = 0;
+        synth_kill();
+    }
 
     /* the room: a tail after the note, then silence */
     use_patch(patch_of("VIOLINS"));

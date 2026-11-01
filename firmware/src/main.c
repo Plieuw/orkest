@@ -191,6 +191,16 @@ static void fm1_main(void)
     keys_init();
     master_boot();
     kb_boot_hold = 1;                               /* no notes from the keys under the splash */
+#if FELUCCA_CPU2
+    if (!bootguard.failed && !ui_one_core) {
+        /* the second core (hal/fm1_cpu1.h; synth.c renders half the voices on it), at power-on, before the audio and
+         * the timers. It starts in the chip's ROM, which the PC limits refuse: open while it starts, closed again once
+         * it has reported in (or not). Off (GLO + SAVE), a crash in the last boot's first 30 s, or no answer: one core */
+        fm1_guard_pc_open();
+        fm1_cpu1_start();
+        fm1_guard_enable(FM1_GUARD_PC);
+    }
+#endif
     audio_init();
     usb_start();
 #if FELUCCA_UART
