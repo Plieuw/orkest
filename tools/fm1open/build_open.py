@@ -235,7 +235,7 @@ def main():
     sdk, build = root / "sdk", root / "build" / "dx7"
     binp = tc / "pi32v2" / "bin"
     clang, ld = binp / "clang", binp / ("pi32v2-ld" if (binp / "pi32v2-ld").exists() else "ld")
-    nm = next((p for p in (binp / "llvm-nm", tc / "common" / "bin" / "llvm-nm") if p.exists()), binp / "llvm-nm")
+    nm = next((p for p in (binp / "llvm-nm", binp / "nm", tc / "common" / "bin" / "llvm-nm") if p.exists()), binp / "nm")
     objcopy = next((p for p in (binp / "llvm-objcopy", tc / "common" / "bin" / "llvm-objcopy", binp / "objcopy") if p.exists()),
                    binp / "llvm-objcopy")
     gold = next((p for p in (tc / "pi32v2" / "lib" / "LLVMgold.so", binp / "LLVMgold.so", tc / "pi32v2" / "lib" / "llvm" / "LLVMgold.so")
