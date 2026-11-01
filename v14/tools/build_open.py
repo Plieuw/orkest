@@ -346,6 +346,17 @@ def main():
     if bad:
         raise SystemExit(f"audio code or data absent or outside internal SRAM: {bad}")
     print("checks: audio ISR code and data in internal SRAM: " + ", ".join(need))
+    # the runtime heap (as Build.ps1: at least 48 KB; the SDK's own work, the update among it, allocates from it)
+    mm = re.search(r"0x([0-9a-fA-F]+)[^\r\n]*_MALLOC_SIZE[ ]*=", (build / "sdk.map").read_text(errors="replace"))
+    if not mm:
+        raise SystemExit("cannot find the runtime heap in the link map")
+    heap = int(mm.group(1), 16)
+    big = sorted(((int(m.group(2), 16), m.group(4)) for m in (re.match(r"^([0-9a-fA-F]+)\s+([0-9a-fA-F]+)\s+([bBdD])\s+(\S+)", l)
+                  for l in run([nm, "--print-size", elf]).splitlines()) if m and 0x01C00000 <= int(m.group(1), 16) < 0x01C80000),
+                 reverse=True)[:12]
+    print(f"checks: runtime heap {heap} B (at least 49152); largest RAM data: " + ", ".join(f"{n} {sz}" for sz, n in big))
+    if heap < 49152:
+        raise SystemExit(f"FM1 runtime heap is {heap} bytes; need at least 49152")
     entry = struct.unpack_from("<I", elf.read_bytes(), 24)[0]
     if entry != ENTRY or syms.get("_start") != ENTRY:
         raise SystemExit(f"entry {entry:#x} does not match the ROM entry")
