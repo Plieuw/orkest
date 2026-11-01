@@ -21,6 +21,7 @@ also give your recipients its complete corresponding source under the same licen
 
 | What | Licence | Where |
 | --- | --- | --- |
+| Orchestral samples from VSCO 2 Community Edition by Versilian Studios: excerpts, built into the firmware as IMA ADPCM at build time (`tools/gen_orkest.py`); every file and its source in `ATTRIBUTION.txt` | CC0 1.0 | `assets/samples-cc0/` |
 | Inter Tight font by The Inter Project Authors: the UI text, rasterised into the firmware at build time (`tools/gen_aa_font.py`) | SIL OFL 1.1 | `assets/fonts/InterTight[wght].ttf`, `LICENSES/OFL-InterTight.txt` |
 | The second core's support (start, mailbox, guards): from X0X by charlesvestal (<https://github.com/charlesvestal/fm1-x0x>), with findings of Melodee (keremimo) and Jangada (zednaked) | GPL-3.0 | `firmware/hal/fm1_cpu1.{h,S}` |
 | JieLi AC79 SDK by JieLi Technology: three of its files go into every `.fwsc` package (below); none are in this tree | Apache-2.0 | `LICENSES/Apache-2.0.txt` |

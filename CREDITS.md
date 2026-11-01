@@ -7,6 +7,9 @@ TRS MIDI input, the flash store, the M-UPGRADE update entry, the update loader, 
 and the drawing code all come from Felucca. Each part keeps its own licence (see [LICENSE](LICENSE),
 [LICENSING.md](LICENSING.md) and [LICENSES/](LICENSES/)).
 
+- Samples: [VSCO 2 Community Edition](https://github.com/sgossner/VSCO-2-CE) by Versilian Studios (Sam Gossner),
+  [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/); the excerpts used and their sources are listed in
+  [assets/samples-cc0/ATTRIBUTION.txt](assets/samples-cc0/ATTRIBUTION.txt)
 - Font: [Inter Tight](https://github.com/rsms/inter-tight) by The Inter Project Authors, [SIL OFL 1.1](LICENSES/OFL-InterTight.txt)
 - Second core: its start, mailbox and guards from [X0X](https://github.com/charlesvestal/fm1-x0x) by
   [charlesvestal](https://github.com/charlesvestal) with the dual-core findings of [Melodee](https://github.com/keremimo/melodee)

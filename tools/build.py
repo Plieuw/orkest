@@ -95,12 +95,14 @@ def tc_all(*cmds):
 
 
 def generate():
-    """generated headers: the UI fonts, keycaps and palettes (firmware/src/gfx.c includes them)"""
+    """generated headers: the UI fonts, keycaps and palettes (firmware/src/gfx.c includes them) and the
+    orchestra's samples (firmware/src/synth.c)"""
     GEN.mkdir(parents=True, exist_ok=True)
     tools = SRC / "tools"
     cmds = [[tools / "gen_aa_font.py", GEN / "ui_fonts.h", "--preset", "inter-tight"],
             [tools / "gen_aa_keycaps.py", GEN / "ui_keycaps.h"],
-            [tools / "gen_ui_palettes.py", GEN / "ui_palettes.h"]]
+            [tools / "gen_ui_palettes.py", GEN / "ui_palettes.h"],
+            [tools / "gen_orkest.py", GEN / "orkest_samples.h"]]
     procs = [subprocess.Popen([sys.executable, *map(str, c)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True) for c in cmds]
     failed = []

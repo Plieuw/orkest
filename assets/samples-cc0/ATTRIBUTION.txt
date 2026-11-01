@@ -1,0 +1,67 @@
+Orkest - sample sources
+Retrieved: 2026-11-01 (the first seconds of each file, mono, resampled)
+Licence: CC0 1.0 Universal (public domain dedication)
+  https://creativecommons.org/publicdomain/zero/1.0/
+Source: Versilian Studios (Sam Gossner), VSCO-2 Community Edition
+  https://github.com/sgossner/VSCO-2-CE  (repository licence: CC0-1.0)
+
+VIOLINS/00_VlnEns_susVib_A2_v2.wav  <-  sgossner/VSCO-2-CE: Strings/Violin Section/susVib/VlnEns_susVib_A2_v2.wav
+VIOLINS/01_VlnEns_susVib_C4_v2.wav  <-  sgossner/VSCO-2-CE: Strings/Violin Section/susVib/VlnEns_susVib_C4_v2.wav
+VIOLINS/02_VlnEns_susVib_D5_v2.wav  <-  sgossner/VSCO-2-CE: Strings/Violin Section/susVib/VlnEns_susVib_D5_v2.wav
+VIOLAS/00_ViolaEns_susvib_C2_v2_1.wav  <-  sgossner/VSCO-2-CE: Strings/Viola Section/susvib/ViolaEns_susvib_C2_v2_1.wav
+VIOLAS/01_ViolaEns_susvib_D3_v2_1.wav  <-  sgossner/VSCO-2-CE: Strings/Viola Section/susvib/ViolaEns_susvib_D3_v2_1.wav
+VIOLAS/02_ViolaEns_susvib_E4_v2_1.wav  <-  sgossner/VSCO-2-CE: Strings/Viola Section/susvib/ViolaEns_susvib_E4_v2_1.wav
+CELLI/00_susvib_C1_v3_1.wav  <-  sgossner/VSCO-2-CE: Strings/Cello Section/susvib/susvib_C1_v3_1.wav
+CELLI/01_susvib_D2_v3_1.wav  <-  sgossner/VSCO-2-CE: Strings/Cello Section/susvib/susvib_D2_v3_1.wav
+CELLI/02_susvib_C3_v3_1.wav  <-  sgossner/VSCO-2-CE: Strings/Cello Section/susvib/susvib_C3_v3_1.wav
+BASSES/00_BKCtbss_SusVib_A#0_v3_rr1.wav  <-  sgossner/VSCO-2-CE: Strings/Solo Contrabass/SusVib/BKCtbss_SusVib_A#0_v3_rr1.wav
+BASSES/01_BKCtbss_SusVib_A1_v3_rr1.wav  <-  sgossner/VSCO-2-CE: Strings/Solo Contrabass/SusVib/BKCtbss_SusVib_A1_v3_rr1.wav
+SOLO_VIOLIN/00_LLVln_ArcoVib_G3_f.wav  <-  sgossner/VSCO-2-CE: Strings/Solo Violin/Arco Vib/LLVln_ArcoVib_G3_f.wav
+SOLO_VIOLIN/01_LLVln_ArcoVib_E4_f.wav  <-  sgossner/VSCO-2-CE: Strings/Solo Violin/Arco Vib/LLVln_ArcoVib_E4_f.wav
+SOLO_VIOLIN/02_LLVln_ArcoVib_C5_f.wav  <-  sgossner/VSCO-2-CE: Strings/Solo Violin/Arco Vib/LLVln_ArcoVib_C5_f.wav
+SOLO_VIOLIN/03_LLVln_ArcoVib_A5_f.wav  <-  sgossner/VSCO-2-CE: Strings/Solo Violin/Arco Vib/LLVln_ArcoVib_A5_f.wav
+TREMOLO/00_VlnEns_Trem_A2_v2.wav  <-  sgossner/VSCO-2-CE: Strings/Violin Section/Trem/VlnEns_Trem_A2_v2.wav
+TREMOLO/01_VlnEns_Trem_C4_v2.wav  <-  sgossner/VSCO-2-CE: Strings/Violin Section/Trem/VlnEns_Trem_C4_v2.wav
+TREMOLO/02_VlnEns_Trem_D5_v2.wav  <-  sgossner/VSCO-2-CE: Strings/Violin Section/Trem/VlnEns_Trem_D5_v2.wav
+PIZZICATO/00_pizzT_C1_v2_RR1.wav  <-  sgossner/VSCO-2-CE: Strings/Cello Section/pizzT/pizzT_C1_v2_RR1.wav
+PIZZICATO/01_pizzT_D2_v2_RR1.wav  <-  sgossner/VSCO-2-CE: Strings/Cello Section/pizzT/pizzT_D2_v2_RR1.wav
+PIZZICATO/02_VlnEns_Pizz_A2_v2_rr1.wav  <-  sgossner/VSCO-2-CE: Strings/Violin Section/Pizz/VlnEns_Pizz_A2_v2_rr1.wav
+PIZZICATO/03_VlnEns_Pizz_A3_v2_rr1.wav  <-  sgossner/VSCO-2-CE: Strings/Violin Section/Pizz/VlnEns_Pizz_A3_v2_rr1.wav
+PIZZICATO/04_VlnEns_Pizz_B4_v2_rr1.wav  <-  sgossner/VSCO-2-CE: Strings/Violin Section/Pizz/VlnEns_Pizz_B4_v2_rr1.wav
+SPICCATO/00_VlnEns_Spic_A2_v2_rr1.wav  <-  sgossner/VSCO-2-CE: Strings/Violin Section/Spic/VlnEns_Spic_A2_v2_rr1.wav
+SPICCATO/01_VlnEns_Spic_C4_v2_rr1.wav  <-  sgossner/VSCO-2-CE: Strings/Violin Section/Spic/VlnEns_Spic_C4_v2_rr1.wav
+SPICCATO/02_VlnEns_Spic_D5_v2_rr1.wav  <-  sgossner/VSCO-2-CE: Strings/Violin Section/Spic/VlnEns_Spic_D5_v2_rr1.wav
+HARP/00_KSHarp_D2_mf.wav  <-  sgossner/VSCO-2-CE: Strings/Harp/KSHarp_D2_mf.wav
+HARP/01_KSHarp_C3_mf.wav  <-  sgossner/VSCO-2-CE: Strings/Harp/KSHarp_C3_mf.wav
+HARP/02_KSHarp_D4_mf.wav  <-  sgossner/VSCO-2-CE: Strings/Harp/KSHarp_D4_mf.wav
+HARP/03_KSHarp_C5_mf.wav  <-  sgossner/VSCO-2-CE: Strings/Harp/KSHarp_C5_mf.wav
+FLUTE/00_LDFlute_susvib_C3_v1_1.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Flute/susvib/LDFlute_susvib_C3_v1_1.wav
+FLUTE/01_LDFlute_susvib_A3_v1_1.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Flute/susvib/LDFlute_susvib_A3_v1_1.wav
+FLUTE/02_LDFlute_susvib_A4_v1_1.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Flute/susvib/LDFlute_susvib_A4_v1_1.wav
+OBOE/00_Oboe_Vib_D3_v3_Main.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Oboe/Vib/Oboe_Vib_D3_v3_Main.wav
+OBOE/01_Oboe_Vib_A#3_v3_Main.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Oboe/Vib/Oboe_Vib_A#3_v3_Main.wav
+OBOE/02_Oboe_Vib_F4_v3_Main.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Oboe/Vib/Oboe_Vib_F4_v3_Main.wav
+CLARINET/00_DCClar_susLong_D2_v2_rr1_sum.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Clarinet/susLong/DCClar_susLong_D2_v2_rr1_sum.wav
+CLARINET/01_DCClar_susLong_D3_v2_rr1_sum.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Clarinet/susLong/DCClar_susLong_D3_v2_rr1_sum.wav
+CLARINET/02_DCClar_susLong_D4_v2_rr1_sum.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Clarinet/susLong/DCClar_susLong_D4_v2_rr1_sum.wav
+BASSOON/00_PSBassoon_A1_v2_1.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Bassoon/vib/PSBassoon_A1_v2_1.wav
+BASSOON/01_PSBassoon_G2_v2_1.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Bassoon/vib/PSBassoon_G2_v2_1.wav
+BASSOON/02_PSBassoon_E3_v2_1.wav  <-  sgossner/VSCO-2-CE: Woodwinds/Bassoon/vib/PSBassoon_E3_v2_1.wav
+HORN/00_MOHorn_sus_G1_v2_1.wav  <-  sgossner/VSCO-2-CE: Brass/F Horn/sus/MOHorn_sus_G1_v2_1.wav
+HORN/01_MOHorn_sus_F2_v2_1.wav  <-  sgossner/VSCO-2-CE: Brass/F Horn/sus/MOHorn_sus_F2_v2_1.wav
+HORN/02_MOHorn_sus_C3_v2_1.wav  <-  sgossner/VSCO-2-CE: Brass/F Horn/sus/MOHorn_sus_C3_v2_1.wav
+TRUMPET/00_Sum_SHTrumpet_susvib_F2_v2_rr1.wav  <-  sgossner/VSCO-2-CE: Brass/Trumpet/susvib/Sum_SHTrumpet_susvib_F2_v2_rr1.wav
+TRUMPET/01_Sum_SHTrumpet_susvib_F3_v2_rr1.wav  <-  sgossner/VSCO-2-CE: Brass/Trumpet/susvib/Sum_SHTrumpet_susvib_F3_v2_rr1.wav
+TRUMPET/02_Sum_SHTrumpet_susvib_F4_v2_rr1.wav  <-  sgossner/VSCO-2-CE: Brass/Trumpet/susvib/Sum_SHTrumpet_susvib_F4_v2_rr1.wav
+TROMBONE/00_tenortbn_sus_F1_v2_1.wav  <-  sgossner/VSCO-2-CE: Brass/Tenor Trombone/sus/tenortbn_sus_F1_v2_1.wav
+TROMBONE/01_tenortbn_sus_D2_v2_1.wav  <-  sgossner/VSCO-2-CE: Brass/Tenor Trombone/sus/tenortbn_sus_D2_v2_1.wav
+TROMBONE/02_tenortbn_sus_C3_v2_1.wav  <-  sgossner/VSCO-2-CE: Brass/Tenor Trombone/sus/tenortbn_sus_C3_v2_1.wav
+TUBA/00_Tuba3_sus_F0_v1_rr1_Mid.wav  <-  sgossner/VSCO-2-CE: Brass/Tuba/sus/Tuba3_sus_F0_v1_rr1_Mid.wav
+TUBA/01_Tuba3_sus_F1_v2_rr1_Mid.wav  <-  sgossner/VSCO-2-CE: Brass/Tuba/sus/Tuba3_sus_F1_v2_rr1_Mid.wav
+TUBA/02_Tuba3_sus_F2_v2_rr1_Mid.wav  <-  sgossner/VSCO-2-CE: Brass/Tuba/sus/Tuba3_sus_F2_v2_rr1_Mid.wav
+TIMPANI/00_Timpani1_Hit_v3_rr1_Sum.wav  <-  sgossner/VSCO-2-CE: Percussion/Timpani/Timpani1_Hit_v3_rr1_Sum.wav
+TIMPANI/01_Timpani3_Hit_v3_rr1_Sum.wav  <-  sgossner/VSCO-2-CE: Percussion/Timpani/Timpani3_Hit_v3_rr1_Sum.wav
+TIMPANI/02_Timpani5_Hit_v3_rr1_Sum.wav  <-  sgossner/VSCO-2-CE: Percussion/Timpani/Timpani5_Hit_v3_rr1_Sum.wav
+GLOCKENSPIEL/00_glock_medium_G4.wav  <-  sgossner/VSCO-2-CE: Percussion/Glock/glock_medium_G4.wav
+GLOCKENSPIEL/01_glock_medium_G5.wav  <-  sgossner/VSCO-2-CE: Percussion/Glock/glock_medium_G5.wav
+GLOCKENSPIEL/02_glock_medium_G6.wav  <-  sgossner/VSCO-2-CE: Percussion/Glock/glock_medium_G6.wav

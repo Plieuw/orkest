@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Basis UI (main loop only): one screen, the LEDs, the buttons and knobs, and the settings in flash.
+/* Orkest UI (main loop only): one screen, the LEDs, the buttons and knobs, and the settings in flash.
  *
- *   KNOB 1  wave (SINE TRI SAW SQUARE)      OCT- / OCT+   octave -3..+3
- *   KNOB 2  attack                          SAVE          the settings into flash (restored at power-on)
- *   KNOB 3  release                         MASTER pot    volume
- *   KNOB 4, SELECT, ALGORITHM, PRESETS and the other buttons: shown on the screen, free for your own use.
+ *   KNOB 1 / PRESETS  the sound (patch)       OCT- / OCT+   octave -3..+3
+ *   KNOB 2  attack                            SAVE          the settings into flash (restored at power-on)
+ *   KNOB 3  release                           MASTER pot    volume
+ *   KNOB 4  room (reverb)
+ *   Choosing a sound sets attack and release to that sound's own; turn KNOB 2 / 3 after to change them.
+ *   SELECT, ALGORITHM and the other buttons: shown on the screen, free for your own use.
  *
  * Drawing: draw_text_line (gfx.c) renders one line into a strip and blits it; a line is redrawn only when its
  * text changed (ui_line). Fonts: AF_S, AF_M, AF_L (Inter Tight, tools/gen_aa_font.py); colours: the palette's
@@ -14,11 +16,11 @@
 static const char *const NOTE_NAME[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 
 /* ------------------------------------------------------------ settings --- */
-#define SET_MAGIC 0x42415331u      /* "BAS1": bump when the layout changes (older records are then ignored) */
+#define SET_MAGIC 0x4F524B31u      /* "ORK1": bump when the layout changes (older records are then ignored) */
 typedef struct {
     uint32_t magic;
     int8_t octave;
-    uint8_t wave, attack, release;
+    uint8_t patch, attack, release, reverb, rsv[3];
 } settings_t;
 
 static void settings_boot(void)    /* power-on, before the audio */
@@ -31,9 +33,10 @@ static void settings_boot(void)    /* power-on, before the audio */
         return;
     if (st_load(OBJ_SETTINGS, &s, sizeof s) == (int)sizeof s && s.magic == SET_MAGIC) {
         sys.octave = (int8_t)clamp(s.octave, OCT_MIN, OCT_MAX);
-        sys.wave = (uint8_t)(s.wave % W_COUNT);
+        sys.patch = (uint8_t)(s.patch % ORK_NPATCH);
         sys.attack = (uint8_t)(s.attack & 127u);
         sys.release = (uint8_t)(s.release & 127u);
+        sys.reverb = (uint8_t)(s.reverb & 127u);
     }
 }
 
@@ -45,9 +48,10 @@ static int settings_save(void)     /* 0 = saved */
     memset(&s, 0, sizeof s);
     s.magic = SET_MAGIC;
     s.octave = sys.octave;
-    s.wave = sys.wave;
+    s.patch = sys.patch;
     s.attack = sys.attack;
     s.release = sys.release;
+    s.reverb = sys.reverb;
     return st_save(OBJ_SETTINGS, &s, sizeof s);
 }
 
@@ -62,7 +66,16 @@ static char ui_shown[NLINES][28];
 static uint8_t ui_force = 1;       /* redraw everything (after the splash, the update screen) */
 static char ui_event[24] = "PLAY THE KEYS";
 static uint32_t ui_event_ms;
-static int32_t k4_count;
+
+static void patch_select(int32_t to)                /* a sound: its own attack and release */
+{
+    const ork_patch_t *p;
+    to = clamp(to, 0, ORK_NPATCH - 1);
+    p = &ORK_PATCH[to];
+    sys.patch = (uint8_t)to;
+    sys.attack = p->attack;
+    sys.release = p->release;
+}
 
 static void ui_line(uint32_t i, const char *s, uint16_t c)
 {
@@ -117,26 +130,33 @@ static void ui_draw(void)
     if (usb.config && !usb.suspended)
         ui_cat(b, sizeof b, "  USB");
     ui_line(L_HEAD, b, T_MID);
+    ui_line(L_NOTE, ORK_PATCH[sys.patch % ORK_NPATCH].name, T_THEME);
     if (note < 128u) {
         str_cpy(b, NOTE_NAME[note % 12u], sizeof b);
         fmt_int(v, (int32_t)note / 12 - 1);
         ui_cat(b, sizeof b, v);
     } else
         str_cpy(b, "-", sizeof b);
-    ui_line(L_NOTE, b, T_THEME);
-    str_cpy(b, "OCTAVE ", sizeof b);
+    ui_cat(b, sizeof b, "   OCTAVE ");
     fmt_int(v, sys.octave);
     if (sys.octave > 0)
         ui_cat(b, sizeof b, "+");
     ui_cat(b, sizeof b, v);
     ui_line(L_OCT, b, T_TEXT);
-    ui_kv(L_K1, "KNOB 1  WAVE", WAVE_NAME[sys.wave % W_COUNT], T_TEXT);
+    fmt_int(v, sys.patch + 1);
+    ui_cat(v, sizeof v, " / ");
+    {
+        char t[6];
+        fmt_int(t, ORK_NPATCH);
+        ui_cat(v, sizeof v, t);
+    }
+    ui_kv(L_K1, "KNOB 1  SOUND", v, T_TEXT);
     fmt_int(v, sys.attack);
     ui_kv(L_K2, "KNOB 2  ATTACK", v, T_TEXT);
     fmt_int(v, sys.release);
     ui_kv(L_K3, "KNOB 3  RELEASE", v, T_TEXT);
-    fmt_int(v, k4_count);
-    ui_kv(L_K4, "KNOB 4  FREE", v, T_DIM);
+    fmt_int(v, sys.reverb);
+    ui_kv(L_K4, "KNOB 4  ROOM", v, T_TEXT);
     ui_line(L_EVENT, fm1_ms - ui_event_ms < 3000u || ui_force ? ui_event : "", T_THEME);
     str_cpy(b, "CPU ", sizeof b);
     fmt_int(v, (int32_t)(sys.cpu_q8 * 100u / 256u));
@@ -226,14 +246,16 @@ static void ui_input(void)
         }
     }
     if ((s = panel_enc(EN_K1)) != 0)
-        sys.wave = (uint8_t)clamp(sys.wave + s, 0, W_COUNT - 1);
+        patch_select(sys.patch + s);
+    if ((s = panel_enc(EN_PRESET)) != 0)
+        patch_select(sys.patch + s);
     if ((s = panel_enc(EN_K2)) != 0)
         sys.attack = (uint8_t)clamp(sys.attack + s, 0, 127);
     if ((s = panel_enc(EN_K3)) != 0)
         sys.release = (uint8_t)clamp(sys.release + s, 0, 127);
     if ((s = panel_enc(EN_K4)) != 0)
-        k4_count += s;
-    for (b = EN_SELECT; b <= EN_PRESET; b++)
+        sys.reverb = (uint8_t)clamp(sys.reverb + s, 0, 127);
+    for (b = EN_SELECT; b <= EN_ALGO; b++)
         if ((s = panel_enc(b)) != 0) {
             str_cpy(t, E_NAME[b], sizeof t);
             ui_cat(t, sizeof t, s > 0 ? " +" : " ");

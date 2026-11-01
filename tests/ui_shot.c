@@ -71,8 +71,7 @@ static void irq_restore(uint32_t f) { (void)f; }
 static uint32_t fl_jedec(void) { return 0x856014u; }
 #define FL_FAR(f) fl_jedec
 #include "../firmware/src/panel.c"
-enum { W_SINE, W_TRI, W_SAW, W_SQUARE, W_COUNT };
-static const char *const WAVE_NAME[W_COUNT] = {"SINE", "TRI", "SAW", "SQUARE"};
+#include "../firmware/src/synth.c"              /* the sounds' names (build/gen/orkest_samples.h) */
 #include "../firmware/src/ui.c"
 
 static int shot(const char *dir, const char *name)
@@ -100,16 +99,31 @@ int main(int argc, char **argv)
     fm1_ms = 0;
     ui_draw();
     bad |= shot(dir, "home");
+    {   /* every sound's name fits (the widest at full size): nothing drawn off the screen */
+        int i;
+        for (i = 0; i < ORK_NPATCH; i++) {
+            sys.patch = (uint8_t)i;
+            ui_draw();
+        }
+        sys.patch = 0;
+        ui_force = 1;
+        ui_draw();
+    }
 
-    sys.last_note = 61;                  /* C#4, octave +2, a knob turned, a button, the widest values */
+    sys.last_note = 61;                  /* C#4, octave +2, the longest sound name, the widest values */
     sys.octave = 2;
-    sys.wave = W_SQUARE;
-    sys.attack = 127;
-    sys.release = 127;
+    enc_steps[panel.enc[EN_K1]] = 40;    /* past the last sound: stops at it */
+    ui_input();
+    if (sys.patch != ORK_NPATCH - 1 || sys.attack != ORK_PATCH[ORK_NPATCH - 1].attack) {
+        printf("KNOB 1: the last sound and its attack FAIL\n");
+        bad = 1;
+    }
+    enc_steps[panel.enc[EN_K2]] = 200;
+    enc_steps[panel.enc[EN_K3]] = 200;
+    enc_steps[panel.enc[EN_K4]] = 200;
+    enc_steps[panel.enc[EN_SELECT]] = -12;
     sys.cpu_q8 = 255;
-    sys.voices = 8;
-    k4_count = -1234;
-    enc_steps[panel.enc[EN_PRESET]] = -12;
+    sys.voices = NVOICE;
     ui_input();
     ui_draw();
     bad |= shot(dir, "playing");
@@ -127,9 +141,10 @@ int main(int argc, char **argv)
     bad |= shot(dir, "low");
 
     {   /* settings: SAVE wrote them, a power-on reads them back */
-        sys.octave = 0; sys.wave = 0; sys.attack = 0; sys.release = 0;
+        sys.octave = 0; sys.patch = 0; sys.attack = 0; sys.release = 0; sys.reverb = 0;
         settings_boot();
-        if (sys.octave != 2 || sys.wave != W_SQUARE || sys.attack != 127 || sys.release != 127) {
+        if (sys.octave != 2 || sys.patch != ORK_NPATCH - 1 || sys.attack != 127 || sys.release != 127 ||
+            sys.reverb != 127) {
             printf("settings round trip FAIL\n");
             bad = 1;
         }

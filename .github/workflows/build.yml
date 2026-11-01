@@ -37,7 +37,7 @@ jobs:
           node-version: "20"
 
       - name: Python packages
-        run: pip install Pillow fonttools mido python-rtmidi
+        run: pip install Pillow fonttools mido python-rtmidi numpy scipy
 
       # JieLi toolchain (clang for pi32v2), cached between runs
       - name: Cache JieLi toolchain
@@ -113,7 +113,7 @@ jobs:
           name: orkest-${{ steps.ver.outputs.version }}
           path: |
             build/release-${{ steps.ver.outputs.version }}/
-            build/host/basis.wav
+            build/host/orkest-demo.wav
             build/host/ui/*.png
 
       - name: Upload site

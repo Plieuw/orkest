@@ -1,60 +1,63 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* Basis synth: NVOICE voices of one oscillator (SINE, TRI, SAW, SQUARE) with a linear attack / release
- * envelope. Fixed point throughout (Q15 samples, 32-bit phase); runs in the audio ISR only.
- * It is a placeholder that proves the keys, the audio path and MIDI work: replace it with your own engine.
+/* Orkest: the orchestral sample player. Runs in the audio ISR only; fixed point throughout.
  *
- *   synth_note_on(note, vel)    start a note (MIDI note number, velocity 1..127)
- *   synth_note_off(note)        release every voice playing that note
+ * The sounds come from tools/gen_orkest.py (build/gen/orkest_samples.h): VSCO 2 CE recordings (CC0) stored as
+ * IMA ADPCM. A zone is one recording: its attack (the transient, played once) and, for sustained instruments, a
+ * crossfaded loop (the sustain, repeated while the key is held); one-shot instruments (pizzicato, harp, timpani,
+ * glockenspiel) play their excerpt to the end and ignore note off. A patch (KNOB 1) is one instrument or up to
+ * ORK_MAXL layered, each layer with its own key range, transposition, level and place on the stage (pan).
+ * After the voices: a small stereo room (Freeverb-style: 4 damped combs + 2 allpasses per side), KNOB 4.
+ *
+ *   synth_note_on(note, vel)    start a note (MIDI note number, velocity 1..127): one voice per sounding layer
+ *   synth_note_off(note)        release the voices of that note (one-shots ring on)
  *   synth_all_off()             release all; synth_kill() silence at once
- *   synth_render(out, n)        n stereo frames, Q15, interleaved L R (added to nothing: written) */
-enum { W_SINE, W_TRI, W_SAW, W_SQUARE, W_COUNT };
-static const char *const WAVE_NAME[W_COUNT] = {"SINE", "TRI", "SAW", "SQUARE"};
+ *   synth_render(out, n)        n stereo frames, Q15, interleaved L R (written, not added) */
+typedef struct {
+    uint32_t off, n, ls, le;     /* ORK_DATA byte offset, samples, loop [ls, le) */
+    uint32_t rate;               /* the zone's sample rate / 44100, Q16 */
+    int16_t root16;              /* root pitch, 1/16 semitone */
+    int16_t pred;                /* ADPCM state at ls */
+    uint8_t idx, lo, hi, looped;
+} ork_zone_t;
+typedef struct {
+    const char *name;
+    uint8_t z0, nz, one;         /* zones; one = one-shot */
+    uint16_t gain;               /* Q8 */
+} ork_inst_t;
+typedef struct {
+    uint8_t inst, lo, hi;        /* instrument; keys it plays */
+    int8_t tr;                   /* transposition, semitones */
+    uint16_t gain;               /* Q8 */
+    int8_t pan;                  /* -64 left .. +63 right */
+} ork_layer_t;
+typedef struct {
+    const char *name;
+    uint8_t attack, release, nl;
+    ork_layer_t l[3];
+} ork_patch_t;
+#include "orkest_samples.h"
+#if ORK_MAXL != 3
+#error "tools/gen_orkest.py MAXL != ork_patch_t's layers"
+#endif
 
-static const int16_t SINE256[256] = {
-    0, 804, 1608, 2410, 3212, 4011, 4808, 5602, 6393, 7179, 7962, 8739,
-    9512, 10278, 11039, 11793, 12539, 13279, 14010, 14732, 15446, 16151, 16846, 17530,
-    18204, 18868, 19519, 20159, 20787, 21403, 22005, 22594, 23170, 23731, 24279, 24811,
-    25329, 25832, 26319, 26790, 27245, 27683, 28105, 28510, 28898, 29268, 29621, 29956,
-    30273, 30571, 30852, 31113, 31356, 31580, 31785, 31971, 32137, 32285, 32412, 32521,
-    32609, 32678, 32728, 32757, 32767, 32757, 32728, 32678, 32609, 32521, 32412, 32285,
-    32137, 31971, 31785, 31580, 31356, 31113, 30852, 30571, 30273, 29956, 29621, 29268,
-    28898, 28510, 28105, 27683, 27245, 26790, 26319, 25832, 25329, 24811, 24279, 23731,
-    23170, 22594, 22005, 21403, 20787, 20159, 19519, 18868, 18204, 17530, 16846, 16151,
-    15446, 14732, 14010, 13279, 12539, 11793, 11039, 10278, 9512, 8739, 7962, 7179,
-    6393, 5602, 4808, 4011, 3212, 2410, 1608, 804, 0, -804, -1608, -2410,
-    -3212, -4011, -4808, -5602, -6393, -7179, -7962, -8739, -9512, -10278, -11039, -11793,
-    -12539, -13279, -14010, -14732, -15446, -16151, -16846, -17530, -18204, -18868, -19519, -20159,
-    -20787, -21403, -22005, -22594, -23170, -23731, -24279, -24811, -25329, -25832, -26319, -26790,
-    -27245, -27683, -28105, -28510, -28898, -29268, -29621, -29956, -30273, -30571, -30852, -31113,
-    -31356, -31580, -31785, -31971, -32137, -32285, -32412, -32521, -32609, -32678, -32728, -32757,
-    -32767, -32757, -32728, -32678, -32609, -32521, -32412, -32285, -32137, -31971, -31785, -31580,
-    -31356, -31113, -30852, -30571, -30273, -29956, -29621, -29268, -28898, -28510, -28105, -27683,
-    -27245, -26790, -26319, -25832, -25329, -24811, -24279, -23731, -23170, -22594, -22005, -21403,
-    -20787, -20159, -19519, -18868, -18204, -17530, -16846, -16151, -15446, -14732, -14010, -13279,
-    -12539, -11793, -11039, -10278, -9512, -8739, -7962, -7179, -6393, -5602, -4808, -4011,
-    -3212, -2410, -1608, -804,
-};
-
-/* phase increment (2^32 per cycle) of notes 120..131; a lower octave is a right shift */
-static const uint32_t NOTE_INC_TOP[12] = {
-    815363807u, 863847862u, 915214929u, 969636441u, 1027294024u, 1088380105u,
-    1153098554u, 1221665363u, 1294309365u, 1371273005u, 1452813141u, 1539201906u,
-};
-static uint32_t note_inc(uint32_t note)
-{
-    if (note > 127u)
-        note = 127u;
-    return NOTE_INC_TOP[note % 12u] >> (10u - note / 12u);
-}
+static const int16_t IMA_STEP[89] = {
+    7, 8, 9, 10, 11, 12, 13, 14, 16, 17, 19, 21, 23, 25, 28, 31, 34, 37, 41, 45, 50, 55, 60, 66, 73, 80, 88, 97,
+    107, 118, 130, 143, 157, 173, 190, 209, 230, 253, 279, 307, 337, 371, 408, 449, 494, 544, 598, 658, 724, 796,
+    876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066, 2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428,
+    4871, 5358, 5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899, 15289, 16818, 18500, 20350,
+    22385, 24623, 27086, 29794, 32767};
+static const int8_t IMA_IDX[8] = {-1, -1, -1, -1, 2, 4, 6, 8};
 
 #define ENV_MAX (1u << 30)
 enum { ST_OFF, ST_ATTACK, ST_SUSTAIN, ST_RELEASE };
 typedef struct {
-    uint32_t phase, inc;
-    uint32_t env, step;          /* 0..ENV_MAX; the attack's or the release's step per frame */
+    const ork_zone_t *z;
+    uint32_t pos, frac, step;    /* next sample to decode; position between s0 and s1 (Q16); samples per frame Q16 */
+    int32_t pred, s0, s1;        /* decoder predictor; the two samples interpolated between */
+    uint32_t env, estep;         /* 0..ENV_MAX; the attack's or the release's step per frame */
     uint32_t age;                /* started at (voice clock): the oldest is stolen first */
-    uint16_t amp;                /* velocity, Q15 */
-    uint8_t note, stage;
+    uint16_t gl, gr;             /* level per side, Q15 (velocity x layer x instrument x pan) */
+    uint8_t idx, note, stage, one, ended;
 } voice_t;
 static voice_t voice[NVOICE];
 static uint32_t voice_clock;
@@ -66,37 +69,83 @@ static uint32_t env_step(uint32_t v)
     return ENV_MAX / (ms * (FS / 1000u));
 }
 
-static void synth_note_on(uint32_t note, uint32_t vel)
+/* the zone's samples per output frame (Q16) for MIDI note `note` */
+static uint32_t zone_step(const ork_zone_t *z, int32_t note)
+{
+    int32_t d16 = clamp(note * 16 - z->root16, -24 * 16, 24 * 16);   /* +-2 octaves: bounded decode load, and a
+                                                                       * one-shot never drags on for seconds */
+    uint32_t u = (uint32_t)(d16 + 4 * 192), oct = u / 192u;          /* + 4 octaves: no negative division */
+    uint64_t r = ((uint64_t)z->rate * ORK_POW2[u % 192u]) >> 30;      /* rate x 2^(frac / 192), Q16 */
+    return (uint32_t)(oct >= 4u ? r << (oct - 4u) : r >> (4u - oct));
+}
+
+static const ork_zone_t *inst_zone(const ork_inst_t *in, int32_t note)
 {
     uint32_t i;
-    voice_t *v = 0;
-    for (i = 0; i < NVOICE && !v; i++)              /* the same note again: retrigger its voice */
-        if (voice[i].stage != ST_OFF && voice[i].note == note)
-            v = &voice[i];
-    for (i = 0; i < NVOICE && !v; i++)              /* a free voice */
+    for (i = 0; i < in->nz; i++)
+        if (note >= ORK_ZONES[in->z0 + i].lo && note <= ORK_ZONES[in->z0 + i].hi)
+            return &ORK_ZONES[in->z0 + i];
+    return &ORK_ZONES[in->z0];
+}
+
+static inline int32_t adpcm_next(voice_t *v);
+
+static voice_t *voice_alloc(void)
+{
+    uint32_t i;
+    voice_t *rel = 0, *old = &voice[0];
+    for (i = 0; i < NVOICE; i++)
         if (voice[i].stage == ST_OFF)
-            v = &voice[i];
-    if (!v) {                                       /* steal: the oldest released voice, else the oldest */
-        voice_t *rel = 0, *old = &voice[0];
-        for (i = 0; i < NVOICE; i++) {
-            if (voice[i].stage == ST_RELEASE && (!rel || voice[i].age < rel->age))
-                rel = &voice[i];
-            if (voice[i].age < old->age)
-                old = &voice[i];
+            return &voice[i];
+    for (i = 0; i < NVOICE; i++) {                  /* steal: the oldest released voice, else the oldest */
+        if (voice[i].stage == ST_RELEASE && (!rel || voice[i].age < rel->age))
+            rel = &voice[i];
+        if (voice[i].age < old->age)
+            old = &voice[i];
+    }
+    return rel ? rel : old;
+}
+
+static void synth_note_on(uint32_t note, uint32_t vel)
+{
+    const ork_patch_t *p = &ORK_PATCH[sys.patch % ORK_NPATCH];
+    uint32_t i, l, vq = vel * vel * 2u;             /* velocity curve, Q15: 127 -> 32258, 100 -> 20000 */
+    for (i = 0; i < NVOICE; i++)                    /* the same note again: the old one fades as the new one starts */
+        if (voice[i].note == note && (voice[i].stage == ST_ATTACK || voice[i].stage == ST_SUSTAIN)) {
+            voice[i].stage = ST_RELEASE;
+            voice[i].estep = env_step(sys.release);
         }
-        v = rel ? rel : old;
-        v->env = 0;                                 /* (a click is better than a stuck note; add a fade if you mind) */
-    }
-    if (v->stage == ST_OFF) {
-        v->phase = 0;
+    for (l = 0; l < p->nl; l++) {
+        const ork_layer_t *ly = &p->l[l];
+        const ork_inst_t *in = &ORK_INST[ly->inst];
+        int32_t n2 = (int32_t)note + ly->tr;
+        uint32_t g, pan;
+        voice_t *v;
+        if (note < ly->lo || note > ly->hi || n2 < 0 || n2 > 127)
+            continue;
+        v = voice_alloc();
+        v->z = inst_zone(in, n2);
+        v->step = zone_step(v->z, n2);
+        v->pos = 0;
+        v->frac = 0;
+        v->pred = 0;
+        v->idx = 0;
+        v->s0 = 0;
+        v->ended = 0;
+        v->s1 = adpcm_next(v);                     /* the interpolator starts between 0 and the first sample */
         v->env = 0;
+        v->estep = env_step(in->one ? 0u : sys.attack);   /* a one-shot keeps its own attack */
+        v->stage = ST_ATTACK;
+        v->one = in->one;
+        v->note = (uint8_t)note;
+        v->age = ++voice_clock;
+        g = (((vq * ly->gain) >> 8) * in->gain) >> 8;     /* Q15 */
+        if (g > 32767u)
+            g = 32767u;
+        pan = (uint32_t)(ly->pan + 64);                    /* 0..127, 64 = centre: full on the near side */
+        v->gl = (uint16_t)(pan <= 64u ? g : g * (128u - pan) / 64u);
+        v->gr = (uint16_t)(pan >= 64u ? g : g * pan / 64u);
     }
-    v->note = (uint8_t)note;
-    v->inc = note_inc(note);
-    v->amp = (uint16_t)(vel * 258u);                /* 127 -> 32766 */
-    v->step = env_step(sys.attack);
-    v->stage = ST_ATTACK;
-    v->age = ++voice_clock;
     sys.last_note = (uint8_t)note;
     sys.last_vel = (uint8_t)vel;
 }
@@ -105,9 +154,9 @@ static void synth_note_off(uint32_t note)
 {
     uint32_t i;
     for (i = 0; i < NVOICE; i++)
-        if (voice[i].note == note && (voice[i].stage == ST_ATTACK || voice[i].stage == ST_SUSTAIN)) {
+        if (voice[i].note == note && !voice[i].one && (voice[i].stage == ST_ATTACK || voice[i].stage == ST_SUSTAIN)) {
             voice[i].stage = ST_RELEASE;
-            voice[i].step = env_step(sys.release);
+            voice[i].estep = env_step(sys.release);
         }
 }
 
@@ -117,7 +166,7 @@ static void synth_all_off(void)
     for (i = 0; i < NVOICE; i++)
         if (voice[i].stage == ST_ATTACK || voice[i].stage == ST_SUSTAIN) {
             voice[i].stage = ST_RELEASE;
-            voice[i].step = env_step(sys.release);
+            voice[i].estep = env_step(voice[i].one ? 20u : sys.release);
         }
 }
 
@@ -128,42 +177,79 @@ static void synth_kill(void)
         voice[i].stage = ST_OFF;
 }
 
-/* PolyBLEP: the band-limiting correction at a jump, t = phase and dt = increment (Q16 of a cycle) */
-static int32_t blep(uint32_t t, uint32_t dt)
+/* the next sample of the voice's zone (IMA ADPCM, two samples a byte, the even one in the low nibble); a loop
+ * jumps back to ls with the decoder state stored for it; past the end of a one-shot: silence, ended */
+static inline int32_t adpcm_next(voice_t *v)
 {
-    int32_t x;
-    if (!dt)
+    const ork_zone_t *z = v->z;
+    uint32_t pos = v->pos, b, code;
+    int32_t step, vd, s;
+    if (pos >= z->n) {
+        v->ended = 1;
         return 0;
-    if (t < dt) {
-        x = (int32_t)((t << 15) / dt);                       /* 0..32768 */
-        return x + x - ((x * x) >> 15) - 32768;
     }
-    if (t > 65536u - dt) {
-        x = (int32_t)(((65536u - t) << 15) / dt);
-        return -(x + x - ((x * x) >> 15) - 32768);
+    b = ORK_DATA[z->off + (pos >> 1)];
+    code = (pos & 1u) ? (b >> 4) : (b & 15u);
+    step = IMA_STEP[v->idx];
+    vd = step >> 3;
+    if (code & 4u)
+        vd += step;
+    if (code & 2u)
+        vd += step >> 1;
+    if (code & 1u)
+        vd += step >> 2;
+    s = clamp(v->pred + ((code & 8u) ? -vd : vd), -32768, 32767);
+    v->pred = s;
+    v->idx = (uint8_t)clamp((int32_t)v->idx + IMA_IDX[code & 7u], 0, 88);
+    if (++pos == z->le && z->looped) {           /* the loop: back to ls in the state the encoder stored for it */
+        pos = z->ls;
+        v->pred = z->pred;
+        v->idx = z->idx;
     }
-    return 0;
+    v->pos = pos;
+    return s;
 }
 
-static int32_t osc(const voice_t *v, uint32_t wave)          /* one sample, Q15 */
+/* ------------------------------------------------------------- room --- */
+/* Freeverb-style: per side 4 lowpass-feedback combs in parallel, then 2 allpasses in series; int16 lines in the
+ * pool (zero-initialised), Q15 coefficients. The right side's lines are 23 samples longer (stereo width). */
+#define RV_NC 4
+#define RV_NA 2
+static const uint16_t RV_COMB[RV_NC] = {1116, 1188, 1277, 1356};
+static const uint16_t RV_AP[RV_NA] = {556, 441};
+#define RV_SPREAD 23
+#define RV_CMAX (1356 + RV_SPREAD)
+#define RV_AMAX (556 + RV_SPREAD)
+static int16_t rv_cbuf[2][RV_NC][RV_CMAX] __attribute__((section(".pool")));
+static int16_t rv_abuf[2][RV_NA][RV_AMAX] __attribute__((section(".pool")));
+static uint16_t rv_ci[2][RV_NC], rv_ai[2][RV_NA];
+static int32_t rv_lp[2][RV_NC];
+#define RV_FB 27525              /* 0.84: the room's size (decay ~1.6 s) */
+#define RV_DAMP 9830             /* 0.30: high frequencies decay faster */
+
+static int32_t rv_side(uint32_t c, int32_t in)
 {
-    uint32_t p = v->phase, t = p >> 16, dt = v->inc >> 16;
-    switch (wave) {
-    case W_SINE: {
-        int32_t a = SINE256[p >> 24], b = SINE256[((p >> 24) + 1u) & 255u];
-        return a + (((b - a) * (int32_t)((p >> 8) & 0xFFFFu)) >> 16);
+    uint32_t k;
+    int32_t acc = 0;
+    for (k = 0; k < RV_NC; k++) {
+        uint32_t len = RV_COMB[k] + (c ? RV_SPREAD : 0u), i = rv_ci[c][k];
+        int32_t y = rv_cbuf[c][k][i];
+        rv_lp[c][k] += ((y - rv_lp[c][k]) * (32768 - RV_DAMP)) >> 15;
+        rv_cbuf[c][k][i] = (int16_t)clamp(in + ((rv_lp[c][k] * RV_FB) >> 15), -32768, 32767);
+        rv_ci[c][k] = (uint16_t)(i + 1u == len ? 0u : i + 1u);
+        acc += y;
     }
-    case W_TRI: {
-        int32_t s = (int32_t)(t >> 0) * 2 - 65536;           /* -65536..65534 */
-        return (s < 0 ? -s : s) - 32768;
+    for (k = 0; k < RV_NA; k++) {
+        uint32_t len = RV_AP[k] + (c ? RV_SPREAD : 0u), i = rv_ai[c][k];
+        int32_t b = rv_abuf[c][k][i];
+        rv_abuf[c][k][i] = (int16_t)clamp(acc + (b >> 1), -32768, 32767);
+        acc = b - acc;
+        rv_ai[c][k] = (uint16_t)(i + 1u == len ? 0u : i + 1u);
     }
-    case W_SAW:
-        return (int32_t)t - 32768 - blep(t, dt);
-    default:
-        return (t < 32768u ? 32767 : -32768) + blep(t, dt) - blep((t + 32768u) & 0xFFFFu, dt);
-    }
+    return acc;
 }
 
+/* ----------------------------------------------------------- render --- */
 static int32_t soft_clip(int32_t x)              /* Q15 in +-1.5 -> +-1: x - 4/27 x^3 */
 {
     int64_t c;
@@ -174,44 +260,60 @@ static int32_t soft_clip(int32_t x)              /* Q15 in +-1.5 -> +-1: x - 4/2
 
 static void synth_render(int32_t *out, uint32_t n)
 {
-    uint32_t i, k, wave = sys.wave % W_COUNT, busy = 0;
-    int32_t m = (int32_t)sys.master_q12;
-    for (i = 0; i < n; i++)
-        out[2u * i] = 0;
+    uint32_t i, k, busy = 0;
+    int32_t m = (int32_t)sys.master_q12, wet = (int32_t)sys.reverb * 258;   /* Q15 */
+    for (i = 0; i < 2u * n; i++)
+        out[i] = 0;
     for (k = 0; k < NVOICE; k++) {
         voice_t *v = &voice[k];
         if (v->stage == ST_OFF)
             continue;
         busy++;
         for (i = 0; i < n; i++) {
+            int32_t s, g;
             switch (v->stage) {
             case ST_ATTACK:
-                if (ENV_MAX - v->env <= v->step) {
+                if (ENV_MAX - v->env <= v->estep) {
                     v->env = ENV_MAX;
                     v->stage = ST_SUSTAIN;
                 } else
-                    v->env += v->step;
+                    v->env += v->estep;
                 break;
             case ST_RELEASE:
-                if (v->env <= v->step) {
+                if (v->env <= v->estep) {
                     v->env = 0;
                     v->stage = ST_OFF;
                 } else
-                    v->env -= v->step;
+                    v->env -= v->estep;
                 break;
             }
-            {
-                int32_t s = osc(v, wave), g = (int32_t)(((v->env >> 15) * v->amp) >> 15);   /* Q15 */
-                out[2u * i] += (s * g >> 15) >> 2;          /* 4 voices at full level reach full scale */
+            v->frac += v->step;
+            while (v->frac >= 65536u) {
+                v->frac -= 65536u;
+                v->s0 = v->s1;
+                v->s1 = adpcm_next(v);
             }
-            v->phase += v->inc;
+            s = v->s0 + (((v->s1 - v->s0) * (int32_t)(v->frac >> 1)) >> 15);
+            g = (int32_t)(v->env >> 15);         /* Q15 */
+            s = (s * g) >> 15;
+            out[2u * i] += (s * v->gl) >> 16;    /* each voice at -6 dB (the samples' sustain sits ~-14 dBFS):
+                                                  * big chords reach the soft clip, MASTER sets the rest */
+            out[2u * i + 1u] += (s * v->gr) >> 16;
             if (v->stage == ST_OFF)
                 break;
         }
+        if (v->ended && v->s0 == 0 && v->s1 == 0)
+            v->stage = ST_OFF;                   /* a one-shot played to its end */
     }
     for (i = 0; i < n; i++) {
-        int32_t s = clamp(soft_clip(out[2u * i]) * m >> 12, -32767, 32767);
-        out[2u * i] = out[2u * i + 1u] = s;
+        int32_t l = out[2u * i], r = out[2u * i + 1u];
+        if (wet) {
+            int32_t in = (l + r) >> 4;            /* the room's input: mono, -24 dB (headroom in the combs) */
+            l += (rv_side(0, in) * wet) >> 15;
+            r += (rv_side(1, in) * wet) >> 15;
+        }
+        out[2u * i] = clamp(soft_clip(l) * m >> 12, -32767, 32767);
+        out[2u * i + 1u] = clamp(soft_clip(r) * m >> 12, -32767, 32767);
     }
     sys.voices = (uint8_t)busy;
 }

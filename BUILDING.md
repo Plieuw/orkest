@@ -10,8 +10,8 @@ The build makes three files in `build/`:
 
 ## Prerequisites (macOS)
 
-- Python 3 with Pillow and fontTools: `pip3 install Pillow fonttools` (the UI font is
-  rasterised at build time)
+- Python 3 with Pillow, fontTools and NumPy: `pip3 install Pillow fonttools numpy` (the UI font is
+  rasterised and the orchestra's samples are encoded at build time; `tools/orkest_fetch.py` also needs SciPy)
 - Docker Desktop. The JieLi toolchain is Linux x86-64 only; the build runs each tool in a
   `linux/amd64` `debian:bookworm-slim` container (Rosetta on Apple silicon). Keep the source
   tree in a folder Docker can share, e.g. under `/Users`.

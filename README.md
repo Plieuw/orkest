@@ -13,19 +13,49 @@ de host-tests en zet de installer met die build op GitHub Pages. De versie is `V
 (bijv. `v0.1-b12`) en staat op het scherm van de FM-1. Het `.fwsc`-bestand, een wav-render en
 schermafbeeldingen staan als artifact bij elke run in de Actions-tab.
 
-## Wat het nu doet
+## Wat het doet
+
+Orkest is een orkest-ROMpler: echte opnames van orkestinstrumenten uit
+[VSCO 2 Community Edition](https://github.com/sgossner/VSCO-2-CE) (CC0), in de firmware zelf opgeslagen.
+Elke noot bestaat uit de **aanslag** (de transient, één keer gespeeld) en een **sustain-loop** die doorloopt
+zolang je de toets vasthoudt; bij loslaten volgt de **release**. Pizzicato, harp, pauken en glockenspiel klinken
+natuurlijk uit (one-shot).
 
 | Bediening | Functie |
 | --- | --- |
-| 27 toetsen | spelen een eenvoudige 8-stemmige synth, sturen USB-MIDI uit (kanaal 1), lichten op |
+| 27 toetsen | spelen de gekozen klank, sturen USB-MIDI uit (kanaal 1), lichten op |
+| KNOB 1 (of PRESETS) | klank kiezen (24, zie hieronder); zet ook attack en release op de waarden van die klank |
+| KNOB 2 / KNOB 3 | attack / release |
+| KNOB 4 | ROOM: hoeveel galm (zaalklank) |
 | OCT- / OCT+ | octaaf −3..+3 (LED aan als het octaaf niet 0 is) |
-| KNOB 1 / 2 / 3 | golfvorm (SINE TRI SAW SQUARE) / attack / release |
-| KNOB 4, SELECT, ALGORITHM, PRESETS, overige knoppen | worden alleen op het scherm getoond: vrij voor jouw functies |
-| SAVE | octaaf, golfvorm, attack en release in flash (terug na herstart) |
+| SAVE | klank, octaaf, attack, release en room in flash (terug na herstart) |
 | MASTER | volume |
-| MIDI in (USB en TRS) | note on/off op elk kanaal, CC 123 = all notes off |
+| MIDI in (USB en TRS) | note on/off met velocity op elk kanaal, CC 123 = all notes off |
 | USB | class-compliant MIDI + USB-audio-ingang (opnemen in je DAW) |
+| SELECT, ALGORITHM, overige knoppen | worden op het scherm getoond: vrij voor nieuwe functies |
 | OCT- + OCT+ 5 s ingedrukt | UBOOT (update-modus) |
+
+**Klanken** (KNOB 1):
+
+| Strijkers | Hout | Koper | Slagwerk e.d. | Ensembles (lagen) |
+| --- | --- | --- | --- | --- |
+| VIOLINS, VIOLAS, CELLI, BASSES, SOLO VIOLIN, TREMOLO, PIZZICATO, SPICCATO | FLUTE, OBOE, CLARINET, BASSOON | HORN, TRUMPET, TROMBONE, TUBA | TIMPANI, GLOCKENSPIEL, HARP | STRINGS, WOODWINDS, BRASS, TUTTI, MARCATO |
+
+De ensembles spelen meerdere instrumenten tegelijk, elk op hun eigen plek in het stereobeeld (violen links, celli
+rechts): STRINGS = violen + celli een octaaf lager; WOODWINDS = fluit (hoog) + klarinet + fagot; BRASS = trompet +
+hoorns en trombones een octaaf lager; TUTTI = violen + hoorns + celli. MARCATO legt de korte spiccato-aanslag over de
+aangehouden violen: de transient van het ene instrument op de sustain van het andere.
+
+### Klanken aanpassen
+
+- `tools/orkest_fetch.py`: welke opnames uit VSCO 2 CE (per instrument een paar noten verspreid over het bereik);
+  de fragmenten staan al in `assets/samples-cc0/` (met `ATTRIBUTION.txt`).
+- `tools/gen_orkest.py`: per instrument de lengte van aanslag en loop en het volume, en de lijst met klanken
+  (`PATCHES`: tot 3 lagen, elk met toetsbereik, transpositie, volume en pan). Draait bij elke build; zoekt de
+  loop-punten, egaliseert het volume binnen de loop, en codeert naar IMA ADPCM.
+- Geheugen: de firmware heeft ~568 KB voor code + samples; de samples mogen nu 420 KB gebruiken (nu ~390 KB:
+  60 zones, 38 s audio). `gen_orkest.py --wav DIR` schrijft elke zone uit zoals de FM-1 hem afspeelt (met loops).
+- `firmware/src/synth.c`: de speler (ADPCM, lagen, envelope, 24 stemmen, galm).
 
 ## Waar begin je
 
@@ -34,9 +64,10 @@ Alles wordt als één bestand gecompileerd: `firmware/src/felucca.c` bepaalt de 
 | Bestand | Wat |
 | --- | --- |
 | `firmware/src/keys.c` | toetsen en MIDI in → noten (draait in de audio-interrupt, elke 32 samples) |
-| `firmware/src/synth.c` | de klank: **vervang dit door je eigen engine** |
+| `firmware/src/synth.c` | de orkestspeler: samples, lagen, envelope, galm |
 | `firmware/src/audio.c` | de audio-interrupt: `out[]` vullen met Q15 stereo |
 | `firmware/src/ui.c` | scherm, LEDs, knoppen, encoders, instellingen opslaan |
+| `tools/gen_orkest.py`, `assets/samples-cc0/` | de samples en de lijst met klanken |
 | `firmware/src/main.c` | opstarten en hoofdlus (met watchdog, boot-guard, UBOOT en update) |
 | `firmware/src/panel.c` | welke matrix-knop welke opdruk heeft |
 | `firmware/src/core.h` | gedeelde constanten en de `sys`-struct (hoofdlus ↔ audio) |
@@ -58,9 +89,9 @@ Zie [BUILDING.md](BUILDING.md). Kort:
 tools/get_toolchain.sh                 # JieLi-toolchain (eenmalig)
 git clone --depth 1 --branch AC79NN_SDK_V1.2.1_2023-12-13 \
     https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git ~/fw-AC79_AIoT_SDK
-pip3 install Pillow fonttools mido python-rtmidi
+pip3 install Pillow fonttools mido python-rtmidi numpy scipy
 ./build.sh                             # -> build/felucca.fwsc
-tests/run_tests.sh                     # host-tests, geen FM-1 nodig (+ schermafbeeldingen in build/host/ui)
+tests/run_tests.sh                     # host-tests, geen FM-1 nodig (+ build/host/orkest-demo.wav en schermafbeeldingen)
 python3 tools/fm1_install.py build/felucca.fwsc
 ```
 

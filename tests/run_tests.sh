@@ -20,16 +20,17 @@ if [ ! -f build/gen/ui_fonts.h ]; then         # the generated font / palette he
     python3 tools/gen_aa_keycaps.py build/gen/ui_keycaps.h >/dev/null
     python3 tools/gen_ui_palettes.py build/gen/ui_palettes.h >/dev/null
 fi
+python3 tools/gen_orkest.py build/gen/orkest_samples.h >/dev/null   # the samples (cached: quick when unchanged)
 OUT=build/host
 mkdir -p "$OUT"
 CC="${CC:-cc} -O1 -Wall -Wno-unused-function"
 fail=0
 run() { echo "== $1"; shift; "$@" || fail=1; }
 
-$CC -o "$OUT/basis_test" tests/basis_test.c -lm
-run "keyboard and synth: keys, octave, MIDI in / out, voices, pitch, levels" "$OUT/basis_test" "$OUT/basis.wav"
+$CC -Ibuild/gen -o "$OUT/basis_test" tests/basis_test.c -lm
+run "keyboard and orchestra: keys, octave, MIDI in / out, decoder, every sound, layers, room" "$OUT/basis_test" "$OUT/orkest-demo.wav"
 ${CC%% *} -O1 -g -w -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-    -o "$OUT/basis_test_san" tests/basis_test.c -lm
+    -Ibuild/gen -o "$OUT/basis_test_san" tests/basis_test.c -lm
 run "keyboard and synth under ASan / UBSan" "$OUT/basis_test_san"
 
 mkdir -p "$OUT/ui"
