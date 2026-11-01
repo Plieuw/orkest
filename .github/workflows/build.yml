@@ -1,0 +1,137 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Orkest: build the firmware, run the host tests and publish the web installer on GitHub Pages.
+#   push to main      -> build + tests + installer site on Pages (package orkest-X.Y-bN.fwsc)
+#   pull request      -> build + tests only
+#   Actions tab       -> "Run workflow" does the same as a push
+# The version is X.Y from the VERSION file plus the run number, e.g. 0.1-b12 (shown on the FM-1 screen).
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AC79_SDK_TAG: AC79NN_SDK_V1.2.1_2023-12-13
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Python packages
+        run: pip install Pillow fonttools mido python-rtmidi
+
+      # JieLi toolchain (clang for pi32v2), cached between runs
+      - name: Cache JieLi toolchain
+        id: tc-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.jieli
+          key: jieli-toolchain-v1
+
+      - name: Get JieLi toolchain
+        if: steps.tc-cache.outputs.cache-hit != 'true'
+        run: tools/get_toolchain.sh
+
+      # Three files of the JieLi AC79 SDK (Apache-2.0) go into every package; cached between runs
+      - name: Cache AC79 SDK files
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/ac79-sdk
+          key: ac79-sdk-${{ env.AC79_SDK_TAG }}
+
+      - name: Get AC79 SDK files
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          url=https://gitee.com/Jieli-Tech/fw-AC79_AIoT_SDK.git
+          tmp=$(mktemp -d)
+          if ! git clone --depth 1 --branch "$AC79_SDK_TAG" --filter=blob:none --sparse "$url" "$tmp/sdk"; then
+            rm -rf "$tmp/sdk"
+            git clone --depth 1 --branch "$AC79_SDK_TAG" "$url" "$tmp/sdk"
+          else
+            git -C "$tmp/sdk" sparse-checkout set --no-cone /cpu/wl82/tools/uboot.boot /cpu/wl82/tools/cfg_tool.bin /cpu/wl82/tools/cfg/eq_cfg_hw.bin
+          fi
+          mkdir -p ~/ac79-sdk/cpu/wl82/tools/cfg
+          for f in uboot.boot cfg_tool.bin cfg/eq_cfg_hw.bin; do
+            cp "$tmp/sdk/cpu/wl82/tools/$f" ~/ac79-sdk/cpu/wl82/tools/$f
+          done
+          rm -rf "$tmp"
+
+      - name: Check SDK files
+        run: |
+          cd ~/ac79-sdk/cpu/wl82/tools
+          sha256sum -c <<'EOF'
+          4e3b4c220dc96641cb5a723f41e68ce41d5261ae9434bb33fbd7f2c59976ded4  uboot.boot
+          276579954f076886a6a7694f65dc71c034a63a2c204b76749065c0ac7b010d1b  cfg_tool.bin
+          41167491bffed4651750719c973d2758adeb9021a5670d02d6a53c85ed80ea7d  cfg/eq_cfg_hw.bin
+          EOF
+
+      - name: Version
+        id: ver
+        run: |
+          base=$(tr -d ' \n\r' < VERSION)
+          echo "version=${base}-b${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: |
+          export JIELI_TOOLCHAIN="$HOME/.jieli/toolchain" AC79_SDK="$HOME/ac79-sdk"
+          ./build.sh --release "${{ steps.ver.outputs.version }}"
+          cp "build/felucca-${{ steps.ver.outputs.version }}.fwsc" build/felucca.fwsc
+
+      - name: Host tests
+        run: tests/run_tests.sh
+
+      - name: Installer site
+        run: |
+          v="${{ steps.ver.outputs.version }}"
+          python3 web/make_site.py "build/felucca-$v.fwsc" "$v" site
+          cp "build/felucca-$v.fwsc" "build/release-$v/orkest-$v.fwsc"
+
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: orkest-${{ steps.ver.outputs.version }}
+          path: |
+            build/release-${{ steps.ver.outputs.version }}/
+            build/host/basis.wav
+            build/host/ui/*.png
+
+      - name: Upload site
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  pages:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}webapp/installer/
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
