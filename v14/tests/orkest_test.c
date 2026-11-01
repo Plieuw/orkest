@@ -602,6 +602,21 @@ int main(int argc, char **argv)
             check("... LOOP: from its start with each repeat", ok[1]);
             ork_set.velo_pat = 0; ork_set.velo_reset = 0;
         }
+        {   /* poly: two keys held, two phrases at once; one let go (HOLD), the other plays on */
+            unsigned b, both = 0;
+            use(patch_of("FLUTE"));
+            ork_set.arp_on = 1; ork_set.arp_mode = 0; ork_set.arp_phrase = 0; ork_set.arp_gate = 100;
+            render(10);
+            (void)ork_post(0, 0x90, 60, 100); (void)ork_post(0, 0x90, 67, 100);
+            for (b = 0; b < 600u * 441u / 1280u; b++) { orkest_render(blk); if (ork_stat.voices >= 2u) both++; }
+            check("ARP poly: two keys, two phrases sounding together", both > 100u);
+            (void)ork_post(0, 0x80, 60, 0); render(500);
+            check("... the first let go: the second plays on", sounding() > 0);
+            (void)ork_post(0, 0x80, 67, 0); render(1500);
+            check("... both let go: silence", sounding() == 0);
+            ork_set.arp_gate = 90;
+            use(patch_of("HARP"));
+        }
         ork_set.arp_on = 1; ork_set.arp_mode = 0;
         for (t = 0; t < ORK_NPHRASE; t++) {         /* every phrase, mono, two keys: sane, one voice, ends when let go */
             ork_set.arp_phrase = (uint8_t)t;

@@ -318,8 +318,8 @@ static FM1_AUDIO_CODE void clock_tick(void)
     clk_age = 0;
 }
 /* ------------------------------------------------------------ phrases --- */
-/* ARP: a key plays the chosen phrase from its note. Monophonic: one phrase at a time, one note at a time; a new key
- * starts it again from its note. Positions in MIDI clock ticks, Q16; a phrase's notes start on the block they fall in
+/* ARP: each key held plays the chosen phrase from its note, up to NRUN keys at once (a chord: the phrase in parallel
+ * from each of its notes); each phrase is one line, one note at a time. Positions in MIDI clock ticks, Q16; a phrase's notes start on the block they fall in
  * (<= 2.9 ms late). */
 #define ORK_PHRASE_EVENTS
 #include "orkest_phrases.inc"
@@ -359,10 +359,11 @@ static FM1_AUDIO_CODE uint32_t phrase_vel(uint32_t key_vel, uint32_t own, uint16
     v = (int32_t)key_vel * v / 100;
     return v < 1 ? 1u : v > 127 ? 127u : (uint32_t)v;
 }
-#define NRUN 1
+#define NRUN 4
 #define RUN_NOTES 1
 typedef struct {
     uint8_t key, vel, on, stop;                  /* stop: let go (HOLD), it ends; ONCE: it ends at its end */
+    uint32_t age;                                /* when it started (the oldest gives way when all are busy) */
     uint16_t idx;                                /* the next note in the phrase */
     uint16_t vstep;                              /* the velocity pattern's next step */
     uint32_t pos;                                /* ticks into the phrase, Q16 */
@@ -383,10 +384,30 @@ static FM1_AUDIO_CODE void run_end(run_t *r)
     run_quiet(r);
     r->on = 0;
 }
-static FM1_AUDIO_CODE void run_start(uint32_t key, uint32_t vel)
+static uint32_t run_clock;
+/* fresh: no other key is held (LATCH: a new chord replaces what was latched) */
+static FM1_AUDIO_CODE void run_start(uint32_t key, uint32_t vel, int fresh)
 {
-    run_t *r = &run[0];                          /* monophonic: the new key takes over */
+    run_t *r = 0;
+    uint32_t i;
+    if (fresh && ork_set.arp_mode == 2u)
+        for (i = 0; i < NRUN; i++)
+            if (run[i].on)
+                run_end(&run[i]);
+    for (i = 0; i < NRUN && !r; i++)             /* the same key again, else a free one */
+        if (run[i].on && run[i].key == key)
+            r = &run[i];
+    for (i = 0; i < NRUN && !r; i++)
+        if (!run[i].on)
+            r = &run[i];
+    if (!r) {                                    /* all busy: the oldest gives way */
+        r = &run[0];
+        for (i = 1; i < NRUN; i++)
+            if (run[i].age < r->age)
+                r = &run[i];
+    }
     run_quiet(r);
+    r->age = ++run_clock;
     r->key = (uint8_t)key;
     r->vel = (uint8_t)vel;
     r->on = 1;
@@ -509,10 +530,15 @@ static FM1_AUDIO_CODE void events(void)
             d1 = (e >> 8) & 0x7Fu;
             d2 = (e >> 16) & 0x7Fu;
             if (st == 0x90u && d2) {
+                int fresh = 1;
+                if (ork_set.arp_on)                 /* (no other key held: a fresh chord) */
+                    for (st = 0; st < 128u && fresh; st++)
+                        if (held[st] && st != d1)
+                            fresh = 0;
                 if (held[d1] < 255u)
                     held[d1]++;
                 if (ork_set.arp_on)                 /* ARP: the key plays its phrase */
-                    run_start(d1, d2);
+                    run_start(d1, d2, fresh);
                 else
                     note_on(d1, d2);
             } else if (st == 0x80u || st == 0x90u) {
