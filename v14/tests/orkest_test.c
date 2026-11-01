@@ -389,6 +389,51 @@ int main(int argc, char **argv)
         ork_set.lfo_trem = 0;
     }
 
+    /* ---- the LFO on the tempo: MIDI clock at 120 BPM (a tick every 918.75 samples), Start, 1/4 (24 ticks): on every
+     * beat the LFO is back at its start; the clock's tempo read; then the clock stops and the internal tempo
+     * (120 BPM, 1/4: 0.5 s a cycle) carries on */
+    {
+        extern uint32_t ork_test_lfo_phase(void);
+        uint32_t blk_n, tick = 0, worst = 0;
+        double next = 0;
+        int32_t ph;
+        ork_set.lfo_on = 1; ork_set.lfo_vib = 40; ork_set.lfo_sync = 1; ork_set.lfo_ticks = 24;
+        ork_set.lfo_inc = (uint32_t)((((uint64_t)1 << 32) * 128u * 120u * 24u) / (44100ull * 60u * 24u));
+        note(0xFA, 0, 0);
+        for (blk_n = 0; blk_n < 44100u * 6u / 128u; blk_n++) {
+            double start = blk_n * 128.0;
+            int beat = 0;
+            while (next < start) {                   /* the ticks due by this block */
+                note(0xF8, 0, 0);
+                if (++tick % 24u == 0u) beat = 1;
+                next += 918.75;
+            }
+            orkest_render(blk);
+            ph = (int32_t)ork_test_lfo_phase();      /* signed: a little before or after the beat */
+            if (beat && blk_n > 44100u * 2u / 128u) {
+                uint32_t a = (uint32_t)(ph < 0 ? -ph : ph);
+                if (a > worst) worst = a;
+            }
+        }
+        printf("  MIDI clock: %u.%u BPM read; LFO off its beat by at most %.1f %% of a cycle\n",
+               ork_stat.clock_bpm10 / 10u, ork_stat.clock_bpm10 % 10u, worst / 42949672.96);
+        check("MIDI clock 120 BPM: read as 120 (+-0.5)", ork_stat.clock && ork_stat.clock_bpm10 >= 1195 && ork_stat.clock_bpm10 <= 1205);
+        check("... the LFO (1/4) back at its start on every beat (within 3 %)", worst < 0x07AE147Bu);
+        {
+            uint32_t p0, p1;
+            render(700);                              /* no more ticks: the clock has stopped */
+            p0 = ork_test_lfo_phase();
+            render(500);
+            p1 = ork_test_lfo_phase();
+            {
+                int32_t d = (int32_t)(p1 - p0);       /* 0.5 s at 120 BPM, 1/4: one whole cycle */
+                check("clock gone: the internal tempo (120 BPM, 1/4 = 0.5 s a cycle) takes over", !ork_stat.clock &&
+                      (d < 0 ? -d : d) < 0x0A3D70A4);
+            }
+        }
+        ork_set.lfo_on = 0; ork_set.lfo_vib = 0; ork_set.lfo_sync = 0;
+    }
+
     /* ---- every sound in turn, to listen to */
     if (argc > 1 && (wav = fopen(argv[1], "wb")) != 0) {
         static const uint8_t SCALE[] = {60, 62, 64, 65, 67, 69, 71, 72};

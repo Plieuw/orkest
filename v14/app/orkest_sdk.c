@@ -20,6 +20,8 @@ void fm1_app_midi_received(unsigned source, const uint8_t *m, size_t n)
     st = m[0] & 0xF0u;
     if (m[0] == 0xFF)                                /* MIDI reset */
         ork_panic();
+    else if (m[0] == 0xF8 || m[0] == 0xFA)           /* clock, Start: the LFO's tempo sync */
+        (void)ork_post(1, m[0], 0, 0);
     else if ((st == 0x90u || st == 0x80u) && n == 3u)
         (void)ork_post(1, (uint8_t)st, m[1], m[2]);
     else if (st == 0xB0u && n == 3u && (m[1] == 120u || m[1] == 123u))

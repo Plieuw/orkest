@@ -41,8 +41,8 @@ typedef struct {
 static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
-struct ork_settings ork_set = {0, 8, 50, 40, 100, 0, 92, 0, 0, 17, 0, 0};
-struct ork_status ork_stat = {0, 0xFF, 0, 1};
+struct ork_settings ork_set = {0, 8, 50, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12};
+struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0};
 
 /* ------------------------------------------------------------ events --- */
 enum { QN = 64u };
@@ -225,6 +225,28 @@ static FM1_AUDIO_CODE void all_off(void)
 /* note events, held counts: a note held by several sources (a key and MIDI) ends when the last lets go */
 static uint8_t held[128];
 static uint8_t modwheel;                         /* MIDI CC 1: vibrato, also with the LFO off */
+static uint32_t lfo_phase;
+/* MIDI clock: ticks since Start, the samples since the last tick, its length (samples, Q8: measured over a beat of
+ * 24 ticks, smoothed), how long since a tick came (blocks) */
+static uint32_t clk_ticks, clk_since, clk_total, clk_mark, clk_len_q8, clk_age = 0xFFFFu;
+static uint8_t clk_count;
+#define CLK_TIMEOUT 172u                         /* blocks: 0.5 s without a tick, the clock has stopped */
+static FM1_AUDIO_CODE void clock_tick(void)
+{
+    clk_ticks++;
+    clk_since = 0;
+    if (clk_age >= CLK_TIMEOUT) {                /* the clock (re)starts: measure afresh */
+        clk_count = 0;
+        clk_mark = clk_total;
+        clk_len_q8 = 0;
+    } else if (++clk_count == 24u) {             /* a beat: its length over 24 ticks, smoothed (1/2 new) */
+        uint32_t len = (clk_total - clk_mark) * 256u / 24u;
+        clk_len_q8 = clk_len_q8 ? (clk_len_q8 + len) / 2u : len;
+        clk_count = 0;
+        clk_mark = clk_total;
+    }
+    clk_age = 0;
+}
 static FM1_AUDIO_CODE void events(void)
 {
     uint32_t l;
@@ -241,6 +263,16 @@ static FM1_AUDIO_CODE void events(void)
             e = lane[l].q[lane[l].r % QN];
             BARRIER();
             lane[l].r++;
+            if ((e & 0xFFu) >= 0xF8u) {             /* real time: clock, start */
+                if ((e & 0xFFu) == 0xF8u)
+                    clock_tick();
+                else if ((e & 0xFFu) == 0xFAu) {    /* Start: the LFO from the downbeat */
+                    clk_ticks = 0;
+                    clk_since = 0;
+                    lfo_phase = 0;
+                }
+                continue;
+            }
             st = e & 0xF0u;
             d1 = (e >> 8) & 0x7Fu;
             d2 = (e >> 16) & 0x7Fu;
@@ -306,7 +338,6 @@ static inline __attribute__((always_inline)) int32_t soft_clip(int32_t x)
 }
 
 /* -------------------------------------------------------------- LFO --- */
-static uint32_t lfo_phase;
 static int32_t lfo_s, lfo_vib_q8, lfo_trem_q15;
 /* sin(2 pi phase / 2^32), Q15, a parabola (within 6 %: an LFO's shape, not a tone) */
 static inline __attribute__((always_inline)) int32_t lfo_sine(uint32_t phase)
@@ -344,7 +375,21 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
             vib = modwheel;
         lfo_vib_q8 = vib * 60 * 256 / 127;
         lfo_trem_q15 = trem * 29491 / 127;
-        lfo_phase += ork_set.lfo_inc;
+        clk_total += FM1_BLOCK_FRAMES;
+        clk_since += FM1_BLOCK_FRAMES;
+        if (clk_age < 0xFFFFu)
+            clk_age++;
+        ork_stat.clock = clk_age < CLK_TIMEOUT && clk_len_q8;
+        ork_stat.clock_bpm10 = (uint16_t)(ork_stat.clock ? 44100u * 600u / 24u * 256u / clk_len_q8 : 0u);
+        if (ork_set.lfo_sync && ork_stat.clock && ork_set.lfo_ticks) {   /* locked to the clock's ticks */
+            uint32_t cyc = ork_set.lfo_ticks, per = 0xFFFFFFFFu / cyc, len = clk_len_q8 >> 8;
+            uint32_t since = clk_since > 65535u ? 65535u : clk_since;
+            uint32_t frac = len ? (since << 16) / len : 0u;                /* into the current tick, Q16 */
+            if (frac > 65535u)
+                frac = 65535u;
+            lfo_phase = (clk_ticks % cyc) * per + (uint32_t)(((uint64_t)frac * per) >> 16);
+        } else
+            lfo_phase += ork_set.lfo_inc;           /* free (Hz) or the internal tempo */
         lfo_s = lfo_sine(lfo_phase);
     }
     for (k = 0; k < NVOICE; k++) {
@@ -427,4 +472,7 @@ long long ork_test_decode(unsigned zone, unsigned samples)
         sum += adpcm_next(&v);
     return sum;
 }
+#endif
+#ifdef FM1_HOST_TEST
+uint32_t ork_test_lfo_phase(void) { return lfo_phase; }
 #endif

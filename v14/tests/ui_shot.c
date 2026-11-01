@@ -6,6 +6,7 @@
 #include "orkest.h"
 #include "fm1_device.h"
 #include "orkest_bank_file.h"
+#include "orkest_lfo.inc"
 static uint16_t fb[240*240];
 static uint8_t flash[536576];
 uint32_t fm1_millis(void){static uint32_t t; return t+=50;}
@@ -39,6 +40,15 @@ int main(void){
   if (!ork_set.lfo_on || ork_set.lfo_vib != 45) { printf("screen test FAIL: LFO menu, K2: vibrato 45, on\n"); return 1; }
   ctl.encoders[2] = 3; groove_screen_control(); ctl.encoders[2] = 0;    /* K1 in the menu: the rate, not the sound */
   if (ork_set.patch != 10 || ork_set.lfo_rate != 95) { printf("screen test FAIL: K1 in the LFO menu\n"); return 1; }
+  ctl.encoders[0] = 1; groove_screen_control(); ctl.encoders[0] = 0;    /* SELECT: TEMPO */
+  ctl.encoders[1] = 8; groove_screen_control(); ctl.encoders[1] = 0;    /* ALGORITHM: 128 BPM */
+  ctl.encoders[2] = 1; groove_screen_control(); ctl.encoders[2] = 0;    /* K1: 1/8 -> 1/8T */
+  for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-lfo-tempo.rgb565");
+  if (!ork_set.lfo_sync || ork_set.lfo_ticks != 8 || ork_set.lfo_rate != 95 ||
+      ork_set.lfo_inc != (uint32_t)((((uint64_t)1 << 32) * 128u * 128u * 24u) / (44100ull * 60u * 8u))) {
+    printf("screen test FAIL: TEMPO 128 BPM, 1/8T\n"); return 1; }
+  ctl.encoders[0] = -1; groove_screen_control(); ctl.encoders[0] = 0;   /* SELECT: FREE again */
+  if (ork_set.lfo_sync || ork_set.lfo_inc != LFO_INC[95]) { printf("screen test FAIL: FREE again\n"); return 1; }
   ctl.buttons = 1u << 8; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* HOME: back */
   ctl.encoders[2] = 1; groove_screen_control(); ctl.encoders[2] = 0;
   if (ork_set.patch != 11) { printf("screen test FAIL: HOME closes the LFO menu\n"); return 1; }

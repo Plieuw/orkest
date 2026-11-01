@@ -5,7 +5,9 @@
  *   KNOB 2            attack               SAVE         sound, attack, release, room, octave into flash
  *   KNOB 3            release              MASTER       volume
  *   KNOB 4            room (reverb)
- *   LFO               the LFO menu (press again or HOME: back): K1 rate, K2 vibrato, K3 tremolo, K4 delay.
+ *   LFO               the LFO menu (press again or HOME: back): K1 rate, K2 vibrato, K3 tremolo, K4 delay;
+ *                     SELECT: FREE (K1 in Hz) or TEMPO (K1 a note value, 4 bars .. 1/32); ALGORITHM: the internal
+ *                     tempo (40..300 BPM). MIDI clock coming in sets the tempo while it runs (Start: the downbeat).
  *                     The modulation is on while vibrato or tremolo is above 0 (LFO's LED lit, "LFO" on the screen)
  *   Choosing a sound sets attack and release to its own; turn KNOB 2 / 3 after to change them.
  *   MIDI CC 1 (mod wheel): vibrato, also with the LFO off.
@@ -81,7 +83,7 @@ static const struct { uint8_t y, scale, centre; } LINE[NLINES] = {
 };
 #define STRIP_ROWS 28u        /* scale 4 (the splash): 4 x 7 rows */
 static uint16_t strip[240u * STRIP_ROWS];
-static char shown[NLINES][24];
+static char shown[NLINES][42];      /* scale 1: up to 40 characters a line */
 static uint16_t shown_colour[NLINES];
 static uint8_t force_draw = 1;
 
@@ -153,18 +155,33 @@ static void knob_row(unsigned l, const char *label, const char *value, uint16_t 
 }
 
 /* --------------------------------------------------------- settings --- */
-#define SET_MAGIC 0x3253524FU    /* "ORS2" (ORS1: before the LFO; read as the defaults) */
+#define SET_MAGIC 0x3353524FU    /* "ORS3" (earlier records: read as the defaults) */
 struct settings {
     uint32_t magic;
     uint8_t patch, attack, release, reverb;
     int8_t octave;
-    uint8_t lfo_on, lfo_rate, lfo_vib, lfo_trem, lfo_delay, pad[2];
+    uint8_t lfo_on, lfo_rate, lfo_vib, lfo_trem, lfo_delay, lfo_sync, lfo_div;
+    uint16_t bpm, pad;
     uint32_t check;
 };
+/* the LFO's note values in TEMPO: MIDI clock ticks a cycle (24 a quarter note) */
+static const struct { uint16_t ticks; char name[6]; } DIV[] = {
+    {384, "4 BAR"}, {192, "2 BAR"}, {96, "1 BAR"}, {48, "1/2"}, {36, "1/4."}, {24, "1/4"}, {18, "1/8."},
+    {16, "1/4T"}, {12, "1/8"}, {8, "1/8T"}, {6, "1/16"}, {4, "1/16T"}, {3, "1/32"}};
+#define NDIV (sizeof DIV / sizeof DIV[0])
+static uint8_t lfo_div = 8;        /* 1/8 */
+static uint16_t bpm = 120;
 static void lfo_apply(void)        /* the player's per-block steps for rate and delay */
 {
     uint32_t blocks = (uint32_t)ork_set.lfo_delay * 3u * 44100u / (127u * 128u);
-    ork_set.lfo_inc = LFO_INC[ork_set.lfo_rate & 127u];
+    if (lfo_div >= NDIV)
+        lfo_div = 8;
+    if (bpm < 40u || bpm > 300u)
+        bpm = 120;
+    ork_set.lfo_ticks = DIV[lfo_div].ticks;
+    ork_set.lfo_inc = ork_set.lfo_sync          /* the internal tempo: 2^32 per cycle of `ticks` clock ticks */
+        ? (uint32_t)((((uint64_t)1 << 32) * 128u * bpm * 24u) / (44100ull * 60u * DIV[lfo_div].ticks))
+        : LFO_INC[ork_set.lfo_rate & 127u];
     ork_set.lfo_dstep = blocks ? 65536u / blocks : 65536u;
     ork_set.lfo_on = ork_set.lfo_vib || ork_set.lfo_trem;   /* on while it has something to do */
 }
@@ -198,6 +215,9 @@ static void settings_load(void)
     ork_set.lfo_vib = s.lfo_vib & 127u;
     ork_set.lfo_trem = s.lfo_trem & 127u;
     ork_set.lfo_delay = s.lfo_delay & 127u;
+    ork_set.lfo_sync = s.lfo_sync & 1u;
+    lfo_div = s.lfo_div;
+    bpm = s.bpm;
 }
 static int settings_save(void)
 {
@@ -214,6 +234,9 @@ static int settings_save(void)
     s.lfo_vib = ork_set.lfo_vib;
     s.lfo_trem = ork_set.lfo_trem;
     s.lfo_delay = ork_set.lfo_delay;
+    s.lfo_sync = ork_set.lfo_sync;
+    s.lfo_div = lfo_div;
+    s.bpm = bpm;
     s.check = set_check(&s);
     if (!fm1_flash_size() || fm1_flash_erase(set_offset()) != FM1_FLASH_OK)
         return -1;
@@ -302,12 +325,24 @@ static void draw(uint32_t now)
     } else if (lfo_menu) {                          /* the LFO menu: its settings on the knobs */
         unsigned d = (unsigned)ork_set.lfo_delay * 30u / 127u, r = LFO_DHZ[ork_set.lfo_rate & 127u];
         line(L_SOUND, ork_set.lfo_on ? "LFO ON" : "LFO OFF", ork_set.lfo_on ? ACCENT : DIM);
-        line(L_NOTE, "LFO / HOME: BACK", DIM);
-        p = put_int(v, (int)(r / 10u));
-        p = put_str(p, ".");
-        p = put_int(p, (int)(r % 10u));
-        put_str(p, " HZ");
-        knob_row(L_K1, "K1 RATE", v, TEXT);
+        if (!ork_set.lfo_sync)
+            line(L_NOTE, "FREE", TEXT);
+        else {
+            unsigned t10 = ork_stat.clock ? ork_stat.clock_bpm10 : bpm * 10u;
+            p = put_str(b, ork_stat.clock ? "MIDI " : "TEMPO ");
+            p = put_int(p, (int)((t10 + 5u) / 10u));
+            put_str(p, " BPM");
+            line(L_NOTE, b, ork_stat.clock ? AMBER : TEXT);
+        }
+        if (ork_set.lfo_sync)
+            put_str(v, DIV[lfo_div].name);
+        else {
+            p = put_int(v, (int)(r / 10u));
+            p = put_str(p, ".");
+            p = put_int(p, (int)(r % 10u));
+            put_str(p, " HZ");
+        }
+        knob_row(L_K1, ork_set.lfo_sync ? "K1 NOTE" : "K1 RATE", v, TEXT);
         put_int(v, ork_set.lfo_vib);
         knob_row(L_K2, "K2 VIBRATO", v, TEXT);
         put_int(v, ork_set.lfo_trem);
@@ -350,7 +385,8 @@ static void draw(uint32_t now)
         put_int(v, ork_set.reverb);
         knob_row(L_K4, "K4 ROOM", v, TEXT);
     }
-    line(L_EVENT, (int32_t)(now - event_until) < 0 ? event : "", AMBER);
+    line(L_EVENT, (int32_t)(now - event_until) < 0 ? event : lfo_menu ? "SELECT SYNC  ALGO BPM  LFO BACK" : "",
+         (int32_t)(now - event_until) < 0 ? AMBER : DIM);
     p = put_str(b, "VOICES ");
     p = put_int(p, ork_stat.voices);
     p = put_str(p, "   LOAD ");
@@ -437,6 +473,17 @@ void groove_screen_control(void)
     /* the knobs: in the LFO menu, the LFO's settings */
     if (lfo_menu) {
         int e[4] = {c.encoders[E_K1], c.encoders[E_K2], c.encoders[E_K3], c.encoders[E_K4]};
+        if (c.encoders[E_SELECT])                   /* SELECT: FREE / TEMPO */
+            ork_set.lfo_sync = c.encoders[E_SELECT] > 0;
+        if (c.encoders[E_ALGO]) {                   /* ALGORITHM: the internal tempo */
+            int v = (int)bpm + c.encoders[E_ALGO];
+            bpm = (uint16_t)(v < 40 ? 40 : v > 300 ? 300 : v);
+        }
+        if (ork_set.lfo_sync && e[0]) {             /* K1 in TEMPO: the note value (clockwise: faster) */
+            int v = (int)lfo_div + e[0];
+            lfo_div = (uint8_t)(v < 0 ? 0 : v >= (int)NDIV ? (int)NDIV - 1 : v);
+            e[0] = 0;
+        }
         volatile uint8_t *t[4] = {&ork_set.lfo_rate, &ork_set.lfo_vib, &ork_set.lfo_trem, &ork_set.lfo_delay};
         for (k = 0; k < 4u; k++)
             if (e[k]) {
@@ -454,7 +501,7 @@ void groove_screen_control(void)
         if ((d = c.encoders[E_K4]) != 0)
             ork_set.reverb = (uint8_t)(ork_set.reverb + d < 0 ? 0 : ork_set.reverb + d > 127 ? 127 : ork_set.reverb + d);
     }
-    if (c.encoders[E_SELECT] || c.encoders[E_ALGO])
+    if (!lfo_menu && (c.encoders[E_SELECT] || c.encoders[E_ALGO]))
         say(c.encoders[E_SELECT] ? "SELECT" : "ALGORITHM", now);
     /* MASTER: 0..1023 -> 0..127, with a little hysteresis against ADC noise */
     if (c.knob <= 1023u && (master_adc > 1023u || c.knob + 4u < master_adc || c.knob > master_adc + 4u)) {

@@ -84,11 +84,17 @@ struct ork_settings {
      * phase step per block and fade-in step per block (Q16) for rate and delay */
     volatile uint8_t lfo_on, lfo_rate, lfo_vib, lfo_trem, lfo_delay;
     volatile uint32_t lfo_inc, lfo_dstep;
+    /* tempo sync: lfo_sync 1 = the LFO follows the tempo, one cycle per lfo_ticks MIDI clock ticks (24 a quarter
+     * note); MIDI clock in sets the tempo while it runs, else lfo_inc carries the internal tempo (control task) */
+    volatile uint8_t lfo_sync;
+    volatile uint16_t lfo_ticks;
 };
 extern struct ork_settings ork_set;
 /* What the player reports (written by the audio ISR). */
 struct ork_status {
     volatile uint8_t voices, last_note, last_vel, idle;   /* idle: not playing from the bank (ork_player_stop) */
+    volatile uint8_t clock;                               /* MIDI clock is coming in */
+    volatile uint16_t clock_bpm10;                        /* its tempo, 0.1 BPM */
 };
 extern struct ork_status ork_stat;
 
