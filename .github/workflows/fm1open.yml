@@ -1,0 +1,52 @@
+# Proef: M-VAVE FM1 Open (github.com/m-vave/fm1_open) bouwen op Linux met de JieLi Linux-toolchain
+name: fm1open-spike
+on:
+  push:
+    branches: ["spike/**"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cache JieLi toolchain
+        id: tc-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.jieli
+          key: jieli-toolchain-v1
+      - name: Get JieLi toolchain
+        if: steps.tc-cache.outputs.cache-hit != 'true'
+        run: tools/get_toolchain.sh
+      - name: Toolchain contents
+        run: |
+          ls -la ~/.jieli/toolchain/ ~/.jieli/toolchain/pi32v2/bin ~/.jieli/toolchain/pi32v2/lib 2>&1 | head -80
+          find ~/.jieli/toolchain/ -iname "*gold*" -o -iname "*objcopy*" -o -iname "*-nm*" | head
+          ~/.jieli/toolchain/pi32v2/bin/clang --version
+      - name: Get FM1 Open
+        run: git clone --depth 1 https://github.com/m-vave/fm1_open ../fm1_open && git -C ../fm1_open log -1 --format="%H %s"
+      - name: Build (LTO)
+        id: lto
+        continue-on-error: true
+        run: python3 tools/fm1open/build_open.py ../fm1_open ~/.jieli/toolchain --out out/fm1open-lto.fwsc
+      - name: Build (no LTO)
+        run: python3 tools/fm1open/build_open.py ../fm1_open ~/.jieli/toolchain --no-lto --out out/fm1open-nolto.fwsc
+      - name: Sizes
+        if: always()
+        run: |
+          ls -la out/ || true
+          cat ../fm1_open/build/dx7/package-report.json || true
+          grep -E "^\s*\.(text|data|ram0_data|cache_ram_data|bss|ram0_bss)\s" ../fm1_open/build/dx7/sdk.map | head || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fm1open-spike
+          path: |
+            out/
+            ../fm1_open/build/dx7/sdk.map
+            ../fm1_open/build/dx7/package-report.json
