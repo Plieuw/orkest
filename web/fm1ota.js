@@ -181,8 +181,9 @@ export class Updater {
         continue;
       }
       const r = parseRequest(pkt);
-      if (!r) continue;
+      if (!r) { const f = parseFrame(pkt); if (f) this.log(`frame cmd ${f.cmd}: ${f.data.slice(0, 16).join(" ")}`); continue; }
       last = Date.now();
+      if (served < 64 || r.addr >= 0xE0000000) this.log(`  req ${r.addr.toString(16)}+${r.len} fl ${r.fl}`);
       if (r.addr === 0xE0000000 || r.addr === 0xF0000000) {
         const ok = [...new TextEncoder().encode("success"), 0];
         link.send(response(r.addr, ok, r.fl));   // its first byte echoed, as for data
@@ -193,8 +194,10 @@ export class Updater {
           while (Date.now() < end && !link.lost) {
             const again = await link.read(Math.min(100, end - Date.now()));
             const ra = again && parseRequest(again);
-            if (ra && ra.addr === finishAddr) link.send(response(ra.addr, ok, ra.fl));
+            if (ra && ra.addr === finishAddr) { this.log("  finish again"); link.send(response(ra.addr, ok, ra.fl)); }
+            else if (again) { const f = parseFrame(again); this.log(f ? `frame cmd ${f.cmd}: ${f.data.slice(0, 16).join(" ")}` : `bytes ${again.length}`); }
           }
+          this.log(`finished; port ${link.lost ? "gone" : "still there"}`);
           return { served, finished: true };
         }
         continue;
@@ -216,6 +219,7 @@ export class Updater {
     const cap = await query(link, 49, [], 1500);
     if (!cap) return false;
     if (cap.length !== 47 || String.fromCharCode(...cap.slice(0, 4)) !== "FMC1") throw fail("stopped", "the FM-1 answered the capability query unexpectedly");
+    this.log(`capability: state ${cap[6]}, error ${cap[46]}, build ${[...cap.slice(14, 22)].map((x) => x.toString(16).padStart(2, "0")).join("")}`);
     if (cap[6] !== 0) throw fail("stopped", "the FM-1 is busy with another update");
     if (!buildId) throw fail("stopped", "this package has no build hash to arm FM1 Open with");
     const n = image.length;
@@ -247,6 +251,15 @@ export class Updater {
     if (!ota) {   // not seen yet (the computer missed it coming back as the loader): replug, and it goes on from there
       step("replug");
       ota = await this.waitFor((id) => id.model === "ota-" + model, 180000);
+    }
+    if (!ota) {   // what is there instead (its update state and last error, FM1 Open)
+      const now = await this.find(null);
+      if (now) {
+        this.log(`instead: ${now.id.text}`);
+        const cap = await query(now.link, 49, [], 1500);
+        if (cap && cap.length === 47) this.log(`capability now: state ${cap[6]}, error ${cap[46]}`);
+        now.link.close();
+      } else this.log("instead: no FM-1 answers");
     }
     if (!ota) throw fail("noloader", "the update loader did not appear. Replug the USB cable and press Install again: the device stays in update mode until it is finished.");
     const s2 = await this.write(ota, image, step);
