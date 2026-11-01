@@ -75,7 +75,7 @@ enum { L_TITLE, L_SOUND, L_NOTE, L_K1, L_K2, L_K3, L_K4, L_EVENT, L_STATUS, NLIN
 static const struct { uint8_t y, scale, centre; } LINE[NLINES] = {
     {8, 2, 0}, {38, 3, 1}, {70, 2, 1}, {100, 2, 0}, {124, 2, 0}, {148, 2, 0}, {172, 2, 0}, {202, 1, 1}, {220, 1, 1},
 };
-#define STRIP_ROWS 21u
+#define STRIP_ROWS 28u        /* scale 4 (the splash): 4 x 7 rows */
 static uint16_t strip[240u * STRIP_ROWS];
 static char shown[NLINES][24];
 static uint16_t shown_colour[NLINES];
@@ -83,7 +83,11 @@ static uint8_t force_draw = 1;
 
 static void draw_text(unsigned y, unsigned scale, unsigned centre, const char *s, uint16_t colour)
 {
-    unsigned n = (unsigned)strlen(s), w = 6u * scale, h = 7u * scale, x0, i, row, col;
+    unsigned n = (unsigned)strlen(s), w, h, x0, i, row, col;
+    if (!scale || 7u * scale > STRIP_ROWS)
+        return;
+    w = 6u * scale;
+    h = 7u * scale;
     if (n > 240u / w)
         n = 240u / w;
     x0 = centre ? (240u - n * w) / 2u : 8u;

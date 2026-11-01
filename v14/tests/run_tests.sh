@@ -18,3 +18,6 @@ cc -std=gnu11 -O1 -Wall $INC -o build/host/bank_device tests/bank_device.c app/o
 node tests/upload_test.mjs
 echo "== update frames: web/fm1ota.js against M-VAVE's WebUpdate.js"
 node tests/frame_test.mjs
+echo "== the screen (app/orkest_ui.c) under ASan / UBSan"
+cc -std=gnu11 -O1 -g -w -fsanitize=address,undefined -fno-sanitize-recover=all $INC -o build/host/ui_shot tests/ui_shot.c app/orkest_ui.c app/orkest_bank.c app/orkest_player.c
+build/host/ui_shot
