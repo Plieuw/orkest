@@ -1,0 +1,43 @@
+# Orkest op FM1 Open V14: de orkestbank en de firmware bouwen, host-tests
+name: v14
+on:
+  push:
+    branches: [v14]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Python packages
+        run: pip install numpy
+      - name: Cache JieLi toolchain
+        id: tc-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.jieli
+          key: jieli-toolchain-v1
+      - name: Get JieLi toolchain
+        if: steps.tc-cache.outputs.cache-hit != 'true'
+        run: tools/get_toolchain.sh
+      - name: Sound bank
+        run: python3 v14/tools/gen_bank.py v14/build/orkest-bank.bin
+      - name: Firmware
+        run: python3 v14/tools/build_open.py v14 ~/.jieli/toolchain --out v14/build/orkest-v14.fwsc
+      - name: Sizes
+        if: always()
+        run: |
+          cat v14/build/dx7/package-report.json || true
+          ~/.jieli/toolchain/pi32v2/bin/objdump -h v14/build/dx7/sdk.elf | grep -E "text|data|bss" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: orkest-v14
+          path: |
+            v14/build/orkest-v14.fwsc
+            v14/build/orkest-bank.bin
