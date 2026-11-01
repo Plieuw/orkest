@@ -66,7 +66,7 @@ static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
 struct ork_settings ork_set = {0, 8, 6, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64, 0, 0, 1, 90, 0, 0, 0, 0, 100, 0, 0,
-                               0, {4, 2, 13, 0}, {48, 51, 39, 0}, {4, 17, 0, 0}, {-1, 0, 1, 0}, 15, 9131};
+                               0, {4, 2, 13, 0}, {48, 51, 39, 0}, {4, 17, 0, 0}, {-1, 0, 1, 0}, 15, 0, 3, 9131};
 struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0};
 
 /* ------------------------------------------------------------ events --- */
@@ -462,9 +462,14 @@ static FM1_AUDIO_CODE void run_start(uint32_t key, uint32_t vel, uint32_t part)
     }
 }
 /* a key (the newest wins: what played ends): ARP's phrase, or each part chosen that has a sound */
+static FM1_AUDIO_DATA const uint16_t CR_TICKS[ORK_NCR] = ORK_CR_TICKS_INIT;
+static uint32_t cr_pos;                          /* call and response: ticks (Q16) since the key, the turn playing */
+static uint8_t cr_turn;
 static FM1_AUDIO_CODE void runs_start(uint32_t key, uint32_t vel)
 {
     uint32_t p;
+    cr_pos = 0;                                  /* the call first */
+    cr_turn = 0;
     for (p = 0; p < NRUN; p++)
         if (run[p].on)
             run_end(&run[p]);
@@ -505,13 +510,37 @@ static FM1_AUDIO_CODE void phrases_sync(void)   /* before the block's events: AR
 }
 static FM1_AUDIO_CODE void phrases(void)
 {
-    uint32_t i, k, inc;
+    uint32_t i, k, inc, beat_inc;
+    int cr;
     const ork_phrase_t *ph;
     if (!ork_set.arp_on)
         return;
     /* ticks this block: from MIDI clock while it runs (2^31 / its tick length in samples Q8), else the tempo */
-    inc = ork_stat.clock && clk_len_q8 ? 2147483648u / clk_len_q8 : ork_set.arp_inc;
-    inc = ork_set.arp_speed == 0u ? inc >> 1 : ork_set.arp_speed == 2u ? inc << 1 : inc;
+    beat_inc = ork_stat.clock && clk_len_q8 ? 2147483648u / clk_len_q8 : ork_set.arp_inc;
+    inc = ork_set.arp_speed == 0u ? beat_inc >> 1 : ork_set.arp_speed == 2u ? beat_inc << 1 : beat_inc;
+    cr = ork_set.cr_on && ork_set.parts_on;
+    if (cr) {                                    /* call and response: whose turn (in beats, whatever the speed) */
+        uint32_t turn = (cr_pos / CR_TICKS[ork_set.cr_len < ORK_NCR ? ork_set.cr_len : 3u] >> 16) & 1u;
+        if (turn != cr_turn) {                   /* a new turn: its parts from their phrases' start, the others end */
+            cr_turn = (uint8_t)turn;
+            for (i = 0; i < NRUN; i++)
+                if (run[i].on && run[i].part < 4u) {
+                    if ((run[i].part >> 1) == turn) {
+                        run[i].pos = 0;
+                        run[i].idx = 0;
+                        if (ork_set.velo_reset)
+                            run[i].vstep = 0;
+                    } else
+                        run_quiet(&run[i]);
+                }
+        }
+        cr_pos += beat_inc;
+        {   /* (round two turns: no wrap of the count) */
+            uint32_t two = (uint32_t)CR_TICKS[ork_set.cr_len < ORK_NCR ? ork_set.cr_len : 3u] << 17;
+            if (cr_pos >= two)
+                cr_pos -= two;
+        }
+    }
     for (i = 0; i < NRUN; i++) {
         run_t *r = &run[i];
         if (!r->on)
@@ -521,6 +550,8 @@ static FM1_AUDIO_CODE void phrases(void)
             continue;
         }
         ph = &PHRASE[r->phrase];
+        if (cr && r->part < 4u && (r->part >> 1) != cr_turn)
+            continue;                            /* not its turn: waits */
         for (k = 0; k < r->nn;)                  /* notes whose time is up */
             if (r->left[k] <= 0) {
                 note_off_src(r->note[k], i + 1u);

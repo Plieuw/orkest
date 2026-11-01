@@ -682,6 +682,27 @@ int main(int argc, char **argv)
             printf("  parts 1 and 3: at most %u voices\n", most);
             check("... parts 1 and 3 chosen: two sounding", most >= 2u && most < 6u);
             ork_set.part_mask = 15; ork_set.tail = 64; ork_set.arp_gate = 90;
+            {   /* call and response, a turn of 1 beat: CELLI + VIOLINS, then FLUTE (its trill's D5), then again */
+                unsigned flute1 = 0, celli2 = 0, flute2 = 0, celli3 = 0;
+                ork_set.cr_on = 1; ork_set.cr_len = 0;
+                render(10);
+                (void)ork_post(0, 0x90, 60, 100);
+                for (b = 0; b < 1500u * 441u / 1280u; b++) {
+                    unsigned ms = b * 128u * 1000u / 44100u, n0 = ork_stat.last_note;
+                    ork_stat.last_note = 255;
+                    orkest_render(blk);
+                    if (ork_stat.last_note == 255) { ork_stat.last_note = (uint8_t)n0; continue; }
+                    if (ms < 480u && ork_stat.last_note == 74) flute1++;
+                    if (ms >= 510u && ms < 980u && ork_stat.last_note == 64) celli2++;   /* (the violins' E4) */
+                    if (ms >= 510u && ms < 980u && ork_stat.last_note == 74) flute2++;
+                    if (ms >= 1010u && ork_stat.last_note == 64) celli3++;
+                }
+                (void)ork_post(0, 0x80, 60, 0); render(3000);
+                printf("  call and response: flute in the call %u, violins in the response %u, flute %u, violins again %u\n",
+                       flute1, celli2, flute2, celli3);
+                check("CALL RESP, 1 beat: parts 1 + 2, then part 3, then 1 + 2 again", !flute1 && !celli2 && flute2 && celli3);
+                ork_set.cr_on = 0; ork_set.cr_len = 3;
+            }
             ork_set.parts_on = 0;
             render(10);
         }

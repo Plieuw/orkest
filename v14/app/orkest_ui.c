@@ -180,7 +180,7 @@ struct settings {
     uint8_t velo_pat, velo_depth, velo_human, velo_reset, parts_on;   /* parts_on: 0 in ORS6 (its pad) */
     uint8_t part_patch[4], part_phrase[4], part_velo[4];
     int8_t part_oct[4];
-    uint8_t part_mask, pad[3];
+    uint8_t part_mask, cr_on, cr_len3, pad;   /* cr_len3: the turn ^ 3 (0 in older records: 1 bar) */
     uint32_t check;
 };
 /* the LFO's note values in TEMPO: MIDI clock ticks a cycle (24 a quarter note) */
@@ -275,6 +275,8 @@ static void settings_load(void)
     ork_set.velo_reset = s.velo_reset & 1u;
     ork_set.parts_on = s.parts_on & 1u;
     ork_set.part_mask = s.part_mask & 15u;
+    ork_set.cr_on = s.magic == SET_MAGIC ? s.cr_on & 1u : 0u;
+    ork_set.cr_len = s.magic == SET_MAGIC ? (uint8_t)((s.cr_len3 ^ 3u) % ORK_NCR) : 3u;
     {
         unsigned k;
         for (k = 0; k < 4u; k++) {
@@ -333,6 +335,8 @@ static int settings_save(void)
     s.velo_reset = ork_set.velo_reset;
     s.parts_on = ork_set.parts_on;
     s.part_mask = ork_set.part_mask;
+    s.cr_on = ork_set.cr_on;
+    s.cr_len3 = (uint8_t)(ork_set.cr_len ^ 3u);
     {
         unsigned k;
         for (k = 0; k < 4u; k++) {
@@ -372,7 +376,9 @@ static uint32_t prev_keys, blocked_keys, prev_buttons, led_shown, event_until, s
 static uint8_t lfo_menu;           /* the LFO menu is open: the knobs set the LFO */
 static uint8_t arp_menu;           /* the ARP menu is open: the knobs choose and shape the phrase */
 static uint8_t scale_menu;         /* 1 the SCL menu: the ARP's scale; 2 the SEQ menu: PARTS (four sounds, each its phrase) */
-static uint8_t part_field;         /* PARTS: what K1..K4 set: 0 sound, 1 phrase, 2 velocity, 3 octave */
+static uint8_t part_field;         /* PARTS: what K1..K4 set: 0 sound, 1 phrase, 2 velocity, 3 octave, 4 call+response */
+static const char *const CR_NAME[ORK_NCR] = {"1 BEAT", "2 BEATS", "3 BEATS", "1 BAR", "2 BARS", "3 BARS", "4 BARS",
+                                            "8 BARS"};
 static uint8_t scale_dirty;        /* changed, not yet stored: when the menu closes, or 5 s after the last turn */
 static uint32_t scale_turned;
 static uint8_t env_menu;           /* the ENV menu is open: the knobs set the envelope and the parts' levels */
@@ -554,19 +560,25 @@ static void draw(uint32_t now)
         knob_row(L_K3, "K3 GATE", v, TEXT);
         knob_row(L_K4, "K4 MODE", MODE[ork_set.arp_mode % 3u], TEXT);
     } else if (scale_menu == 2u) {                  /* the SEQ menu's PARTS: four sounds, each its phrase */
-        static const char *const FIELD[4] = {"SOUND", "PHRASE", "VELOCITY", "OCTAVE"};
+        static const char *const FIELD[5] = {"SOUND", "PHRASE", "VELOCITY", "OCTAVE", "CALL RESP"};
         static const uint8_t ROW[4] = {L_K1, L_K2, L_K3, L_K4};
         static const char *const KN[4] = {"1", "2", "3", "4"};
         unsigned k;
         line(L_SOUND, ork_set.parts_on ? "PARTS ON" : "PARTS OFF", ork_set.parts_on ? ACCENT : DIM);
         p = put_str(b, "< ");
-        p = put_str(p, FIELD[part_field & 3u]);
+        p = put_str(p, FIELD[part_field % 5u]);
         put_str(p, " >");
         line(L_NOTE, b, TEXT);
+        if (part_field == 4u) {                     /* call and response: parts 1 + 2, then 3 + 4, a turn each */
+            knob_row(L_K1, "K1 CALL RESP", ork_set.cr_on ? "ON" : "OFF", TEXT);
+            knob_row(L_K2, "K2 TURN", CR_NAME[ork_set.cr_len % ORK_NCR], TEXT);
+            knob_row(L_K3, "CALL", "PARTS 1 2", DIM);
+            knob_row(L_K4, "RESPONSE", "PARTS 3 4", DIM);
+        } else
         for (k = 0; k < 4u; k++) {
             const char *val;
             unsigned pp = ork_set.part_patch[k];
-            switch (part_field & 3u) {
+            switch (part_field % 5u) {
             case 0: val = !pp ? "OFF" : pp <= ork_bank.np ? ork_bank.patch[pp - 1u].name : "?"; break;
             case 1: val = PHRASE_NAME[ork_set.part_phrase[k] % ORK_NPHRASE][0]; break;
             case 2: val = VELO_NAME[ork_set.part_velo[k] % ORK_NVELO]; break;
@@ -821,13 +833,21 @@ void groove_screen_control(void)
         if (c.encoders[E_SELECT])
             ork_set.parts_on = c.encoders[E_SELECT] > 0;
         if (c.encoders[E_ALGO]) {
-            v = ((int)part_field + (c.encoders[E_ALGO] > 0 ? 1 : -1)) & 3;
+            v = ((int)part_field + (c.encoders[E_ALGO] > 0 ? 1 : 4)) % 5;
             part_field = (uint8_t)v;
         }
+        if (part_field == 4u) {                     /* call and response: K1 on/off, K2 the turn */
+            if (e[0])
+                ork_set.cr_on = e[0] > 0;
+            if (e[1]) {
+                v = (int)ork_set.cr_len + (e[1] > 0 ? 1 : -1);
+                ork_set.cr_len = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NCR ? (int)ORK_NCR - 1 : v);
+            }
+        } else
         for (k = 0; k < 4u; k++) {
             if (!e[k])
                 continue;
-            switch (part_field & 3u) {
+            switch (part_field % 5u) {
             case 0:
                 v = (int)ork_set.part_patch[k] + e[k];
                 ork_set.part_patch[k] = (uint8_t)(v < 0 ? 0 : v > (int)ork_bank.np ? (int)ork_bank.np : v);
