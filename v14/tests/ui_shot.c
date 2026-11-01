@@ -87,5 +87,9 @@ int main(void){
   ctl.encoders[1] = ctl.encoders[3] = ctl.encoders[0] = 0;
   for(int i=0;i<40;i++)groove_screen_control(); save("build/host/screen-parts.rgb565");
   if (!ork_set.parts_on || ork_set.part_phrase[1] != 52) { printf("screen test FAIL: PARTS (%d %d)\n", ork_set.parts_on, ork_set.part_phrase[1]); return 1; }
+  ctl.buttons = 1u << 7; groove_screen_control(); ctl.buttons = 0;    /* GLO: panning; K1 -6 (spread 70 %) */
+  ctl.encoders[2] = -6; groove_screen_control(); ctl.encoders[2] = 0;
+  for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-pan.rgb565");
+  if (ork_set.pan_spread != 70 || ork_set.pan_mode) { printf("screen test FAIL: GLO (%d)\n", ork_set.pan_spread); return 1; }
   printf("screen test passed (build/host/screen-*.rgb565)\n");
   return 0;}

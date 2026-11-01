@@ -121,6 +121,9 @@ struct ork_settings {
     /* call and response (SEQ PARTS): parts 1 + 2 play a turn, then parts 3 + 4, and so on; cr_len: the turn's length,
      * ORK_CR_TICKS[cr_len] clock ticks (24 a beat) */
     volatile uint8_t cr_on, cr_len;
+    /* GLO: panning; pan_mode 0 the concert seating (orkest_seats.inc), 1 the sound's own layer pans; pan_spread
+     * 0..127 % of it (0: all in the middle) */
+    volatile uint8_t pan_mode, pan_spread;
     volatile uint32_t arp_inc;
 };
 /* a phrase's note: start (ticks, 24 a quarter note), length (ticks), interval from the key (semitones), velocity */

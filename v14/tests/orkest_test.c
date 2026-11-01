@@ -506,6 +506,28 @@ int main(int argc, char **argv)
         check("velocity -> tone: velocity 40 clearly duller than 127 (brightness under 2/3)", bright[1] < bright[0] * 0.67);
     }
 
+    /* ---- panning: the concert seating (violins left, celli right), spread 0: the middle */
+    {
+        static const char *const PN[2] = {"VIOLINS", "CELLI"};
+        double side[2][2];
+        unsigned q, sp, b, k;
+        ork_set.reverb = 0;
+        for (sp = 0; sp < 2u; sp++)
+            for (q = 0; q < 2u; q++) {
+                double el = 0, er = 0;
+                ork_set.pan_spread = sp ? 0 : 100;
+                use(patch_of(PN[q]));
+                note(0x90, 60, 100);
+                for (b = 0; b < 100u; b++) { orkest_render(blk); for (k = 0; k < 128u; k++) { el += (double)blk[2 * k] * blk[2 * k]; er += (double)blk[2 * k + 1] * blk[2 * k + 1]; } }
+                note(0x80, 60, 0); render(2000);
+                side[sp][q] = 10 * log10((el + 1) / (er + 1));
+            }
+        printf("  left over right (dB): VIOLINS %.1f, CELLI %.1f; spread 0: %.1f, %.1f\n", side[0][0], side[0][1], side[1][0], side[1][1]);
+        check("seating: the violins left, the celli right", side[0][0] > 3 && side[0][1] < -3);
+        check("... spread 0: both in the middle", fabs(side[1][0]) < 0.5 && fabs(side[1][1]) < 0.5);
+        ork_set.pan_spread = 100;
+    }
+
     /* ---- polyphony: 16 notes, last note priority */
     {
         unsigned k;

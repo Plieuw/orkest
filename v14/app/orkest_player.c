@@ -66,7 +66,7 @@ static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
 struct ork_settings ork_set = {0, 8, 6, 40, 100, 0, 92, 0, 0, 17, 0, 0, 0, 12, 64, 64, 0, 0, 1, 90, 0, 0, 0, 0, 100, 0, 0,
-                               0, {4, 2, 13, 0}, {48, 51, 39, 0}, {4, 17, 0, 0}, {-1, 0, 1, 0}, 15, 0, 3, 9131};
+                               0, {4, 2, 13, 0}, {48, 51, 39, 0}, {4, 17, 0, 0}, {-1, 0, 1, 0}, 15, 0, 3, 0, 100, 9131};
 struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0};
 
 /* ------------------------------------------------------------ events --- */
@@ -211,6 +211,9 @@ static FM1_AUDIO_CODE const ork_zone_t *zone_of(const ork_inst_t *in, int32_t no
     return &ork_bank.zone[in->z0];
 }
 static uint8_t layer_inst[NVOICE];               /* the instrument a voice plays (its release) */
+#define ORK_SEAT_DATA FM1_AUDIO_DATA  /* (the audio ISR: in SRAM) */
+#define ORK_SEAT_CODE FM1_AUDIO_CODE
+#include "orkest_seats.inc"
 #define NPOLY 16                                 /* notes at once; a new one past it ends the oldest */
 static uint32_t note_clock;
 static FM1_AUDIO_CODE void release_voice(voice_t *v, uint32_t time, int tail);
@@ -297,7 +300,10 @@ static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel
         g = (((vq * ly->gain) >> 8) * in->gain) >> 8;
         if (g > 32767u)
             g = 32767u;
-        pan = (uint32_t)(ly->pan + 64);          /* 0..127, 64 = centre: full on the near side */
+        {   /* the place: the concert seating or the sound's own, times the spread; 0..127, 64 = centre */
+            int32_t pn = (ork_set.pan_mode ? ly->pan : seat_pan(in->name)) * (int32_t)ork_set.pan_spread / 100;
+            pan = (uint32_t)((pn < -64 ? -64 : pn > 63 ? 63 : pn) + 64);   /* full on the near side */
+        }
         {   /* brightness: the velocity, half an octave of cutoff more per octave up */
             int32_t bi = (int32_t)vel + (n2 - 60);
             v->lp_a = TONE[bi < 0 ? 0 : bi > 127 ? 127 : bi];

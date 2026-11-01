@@ -27,6 +27,9 @@
 #define ORK_VELO_STEPS
 #define ORK_VELO_NAMES
 #include "orkest_velo.inc"
+#define ORK_SEAT_DATA
+#define ORK_SEAT_CODE
+#include "orkest_seats.inc"
 
 enum { BACK = 0x0000, TEXT = 0xef5d, ACCENT = 0x07ff, DIM = 0x738e, AMBER = 0xfd20 };
 enum { B_OCTDN, B_OCTUP, B_FX, B_SCL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B_PLAY, B_REC };
@@ -180,7 +183,8 @@ struct settings {
     uint8_t velo_pat, velo_depth, velo_human, velo_reset, parts_on;   /* parts_on: 0 in ORS6 (its pad) */
     uint8_t part_patch[4], part_phrase[4], part_velo[4];
     int8_t part_oct[4];
-    uint8_t part_mask, cr_on, cr_len3, pad;   /* cr_len3: the turn ^ 3 (0 in older records: 1 bar) */
+    uint8_t part_mask, cr_on, cr_len3;        /* cr_len3: the turn ^ 3 (0 in older records: 1 bar) */
+    uint8_t pan;                              /* bit 7 pan_mode, bits 0..6 pan_spread ^ 100 (0 in older records) */
     uint32_t check;
 };
 /* the LFO's note values in TEMPO: MIDI clock ticks a cycle (24 a quarter note) */
@@ -276,6 +280,8 @@ static void settings_load(void)
     ork_set.parts_on = s.parts_on & 1u;
     ork_set.part_mask = s.part_mask & 15u;
     ork_set.cr_on = s.magic == SET_MAGIC ? s.cr_on & 1u : 0u;
+    ork_set.pan_mode = s.magic == SET_MAGIC ? s.pan >> 7 : 0u;
+    ork_set.pan_spread = s.magic == SET_MAGIC ? (uint8_t)((s.pan & 127u) ^ 100u) : 100u;
     ork_set.cr_len = s.magic == SET_MAGIC ? (uint8_t)((s.cr_len3 ^ 3u) % ORK_NCR) : 3u;
     {
         unsigned k;
@@ -337,6 +343,7 @@ static int settings_save(void)
     s.part_mask = ork_set.part_mask;
     s.cr_on = ork_set.cr_on;
     s.cr_len3 = (uint8_t)(ork_set.cr_len ^ 3u);
+    s.pan = (uint8_t)((ork_set.pan_mode ? 128u : 0u) | ((ork_set.pan_spread & 127u) ^ 100u));
     {
         unsigned k;
         for (k = 0; k < 4u; k++) {
@@ -381,6 +388,7 @@ static const char *const CR_NAME[ORK_NCR] = {"1 BEAT", "2 BEATS", "3 BEATS", "1 
                                             "8 BARS"};
 static uint8_t scale_dirty;        /* changed, not yet stored: when the menu closes, or 5 s after the last turn */
 static uint32_t scale_turned;
+static uint8_t pan_menu;           /* the GLO menu is open: panning */
 static uint8_t env_menu;           /* the ENV menu is open: the knobs set the envelope and the parts' levels */
 static uint8_t key_note[KEYS];
 static char event[40];
@@ -608,6 +616,32 @@ static void draw(uint32_t now)
         knob_row(L_K2, "K2 SCALE", SCALE_NAME[sc], TEXT);
         knob_row(L_K3, "", "", TEXT);
         knob_row(L_K4, "", "", TEXT);
+    } else if (pan_menu) {                          /* the GLO menu: panning, the sound's layers where they sit */
+        static const uint8_t ROW[2] = {L_K3, L_K4};
+        const ork_patch_t *pt = ork_bank.np ? &ork_bank.patch[ork_set.patch % ork_bank.np] : 0;
+        unsigned k;
+        line(L_SOUND, "PANNING", ACCENT);
+        line(L_NOTE, ork_set.pan_mode ? "AS THE SOUND" : "CONCERT SEATING", TEXT);
+        put_str(put_int(v, ork_set.pan_spread), " %");
+        knob_row(L_K1, "K1 SPREAD", v, TEXT);
+        knob_row(L_K2, "K2 SEATS", ork_set.pan_mode ? "SOUND" : "CONCERT", TEXT);
+        for (k = 0; k < 2u; k++) {                  /* the current sound's first two layers */
+            if (pt && k < pt->nl && pt->l[k].inst < ork_bank.ni) {
+                const char *nm = ork_bank.inst[pt->l[k].inst].name;
+                int32_t pn = (ork_set.pan_mode ? pt->l[k].pan : seat_pan(nm)) * (int32_t)ork_set.pan_spread / 100;
+                pn = pn < -64 ? -64 : pn > 63 ? 63 : pn;
+                p = v;
+                if (pn)
+                    p = put_str(p, pn < 0 ? "L" : "R");
+                put_int(p, pn < 0 ? -pn * 100 / 64 : pn * 100 / 63);
+                if (!pn)
+                    put_str(v, "C");
+                strncpy(b, nm, 12);
+                b[12] = 0;
+                knob_row(ROW[k], b, v, DIM);
+            } else
+                knob_row(ROW[k], "", "", DIM);
+        }
     } else if (env_menu) {                          /* the ENV menu: the envelope and the three parts */
         line(L_SOUND, "ENVELOPE", ACCENT);
         line(L_NOTE, "64 AS RECORDED", DIM);
@@ -655,7 +689,7 @@ static void draw(uint32_t now)
         knob_row(L_K4, "K4 ROOM", v, TEXT);
     }
     line(L_EVENT, (int32_t)(now - event_until) < 0 ? event : lfo_menu ? "SELECT SYNC  ALGO BPM  LFO BACK"
-         : env_menu ? "ENV OR HOME BACK" : arp_menu ? arp_hint() : scale_menu == 2u ? "SELECT ON OFF  ALGO FIELD  SEQ BACK"
+         : pan_menu ? "GLO OR HOME BACK" : env_menu ? "ENV OR HOME BACK" : arp_menu ? arp_hint() : scale_menu == 2u ? "SELECT ON OFF  ALGO FIELD  SEQ BACK"
          : scale_menu ? "THE ARP KEEPS TO IT   SCL BACK" : "",
          (int32_t)(now - event_until) < 0 ? AMBER : DIM);
     p = put_str(b, "VOICES ");
@@ -731,8 +765,9 @@ void groove_screen_control(void)
             octave = octave < -3 ? -3 : octave > 3 ? 3 : octave;
         } else if (k == B_SAVE)
             say(settings_save() == 0 ? "SAVED" : "SAVE FAILED", now);
-        else if (k == B_LFO || k == B_ENV || k == B_ARP || k == B_SEQ || k == B_SCL ||
-                 (k == B_HOME && (lfo_menu || env_menu || arp_menu || scale_menu))) {
+        else if (k == B_LFO || k == B_ENV || k == B_ARP || k == B_SEQ || k == B_SCL || k == B_GLO ||
+                 (k == B_HOME && (lfo_menu || env_menu || arp_menu || scale_menu || pan_menu))) {
+            pan_menu = k == B_GLO ? !pan_menu : 0;
             lfo_menu = k == B_LFO ? !lfo_menu : 0;
             env_menu = k == B_ENV ? !env_menu : 0;
             arp_menu = k == B_ARP ? (uint8_t)((arp_menu + 1u) % 4u) : 0;   /* ARP: phrase, velocity, parts, closed */
@@ -879,6 +914,14 @@ void groove_screen_control(void)
             v = (int)ork_set.scale + c.encoders[E_K2] + c.encoders[E_PRESETS];
             ork_set.scale = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NSCALE ? (int)ORK_NSCALE - 1 : v);
         }
+    } else if (pan_menu) {                          /* K1 the spread, K2 concert seating / the sound's own */
+        int v;
+        if (c.encoders[E_K1]) {
+            v = (int)ork_set.pan_spread + c.encoders[E_K1] * 5;
+            ork_set.pan_spread = (uint8_t)(v < 0 ? 0 : v > 125 ? 125 : v);
+        }
+        if (c.encoders[E_K2])
+            ork_set.pan_mode = c.encoders[E_K2] > 0;
     } else if (env_menu) {
         volatile uint8_t *t[4] = {&ork_set.attack, &ork_set.release, &ork_set.transient, &ork_set.tail};
         const int e[4] = {c.encoders[E_K1], c.encoders[E_K2], c.encoders[E_K3], c.encoders[E_K4]};
@@ -897,7 +940,7 @@ void groove_screen_control(void)
         if ((d = c.encoders[E_K4]) != 0)
             ork_set.reverb = (uint8_t)(ork_set.reverb + d < 0 ? 0 : ork_set.reverb + d > 127 ? 127 : ork_set.reverb + d);
     }
-    if (!lfo_menu && !env_menu && !arp_menu && !scale_menu && (c.encoders[E_SELECT] || c.encoders[E_ALGO]))
+    if (!lfo_menu && !env_menu && !arp_menu && !scale_menu && !pan_menu && (c.encoders[E_SELECT] || c.encoders[E_ALGO]))
         say(c.encoders[E_SELECT] ? "SELECT" : "ALGORITHM", now);
     if (scale_dirty && now - scale_turned >= 5000u) {   /* the scale kept, also with the menu left open */
         scale_dirty = 0;
