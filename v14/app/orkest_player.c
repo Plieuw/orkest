@@ -437,7 +437,10 @@ static FM1_AUDIO_CODE void phrases(void)
                 if (n < 0 || n > 127)
                     continue;
                 run_quiet(r);                    /* one note at a time */
-                note_on((uint32_t)n, r->vel);
+                {   /* the key's velocity, shaped by the phrase's (100 = as played) */
+                    uint32_t v = (uint32_t)r->vel * e->vel / 100u;
+                    note_on((uint32_t)n, v < 1u ? 1u : v > 127u ? 127u : v);
+                }
                 r->note[r->nn] = (uint8_t)n;
                 r->left[r->nn] = (int32_t)(((uint32_t)e->len * ork_set.arp_gate << 16) / 100u);
                 r->nn++;

@@ -561,6 +561,21 @@ int main(int argc, char **argv)
             check("SEQ C MAJOR: FUR ELISE stays in the scale (no black key)", out == 0);
             check("... scale off: as written (D#5 played)", sharp > 0);
         }
+        {   /* velocity in the phrases: GALLOP from a key at 100: soft sixteenths, accented eighths */
+            unsigned b, lo = 255, hi = 0, q;
+            for (q = 0; q < ORK_NPHRASE && strcmp(PHRASE_NAME[q][0], "GALLOP"); q++) ;
+            ork_set.arp_on = 1; ork_set.arp_mode = 0; ork_set.arp_phrase = (uint8_t)q; ork_set.scale = 0;
+            render(10);
+            (void)ork_post(0, 0x90, 60, 100);
+            for (b = 0; b < 1000u * 441u / 1280u; b++) {
+                orkest_render(blk);
+                if (ork_stat.last_vel < lo) lo = ork_stat.last_vel;
+                if (ork_stat.last_vel > hi) hi = ork_stat.last_vel;
+            }
+            (void)ork_post(0, 0x80, 60, 0); render(2000);
+            printf("  GALLOP velocities %u .. %u (key 100)\n", lo, hi);
+            check("ARP velocity: GALLOP's notes soft and accented (spread > 30)", q < ORK_NPHRASE && hi - lo > 30u);
+        }
         ork_set.arp_on = 1; ork_set.arp_mode = 0;
         for (t = 0; t < ORK_NPHRASE; t++) {         /* every phrase, mono, two keys: sane, one voice, ends when let go */
             ork_set.arp_phrase = (uint8_t)t;

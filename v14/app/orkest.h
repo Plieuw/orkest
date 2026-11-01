@@ -110,8 +110,8 @@ struct ork_settings {
     volatile uint8_t scale, scale_root;
     volatile uint32_t arp_inc;
 };
-/* a phrase's note: start (ticks, 24 a quarter note), length (ticks), interval from the key (semitones) */
-typedef struct { uint16_t at; uint8_t len; int8_t iv; } ork_pev_t;
+/* a phrase's note: start (ticks, 24 a quarter note), length (ticks), interval from the key (semitones), velocity */
+typedef struct { uint16_t at; uint8_t len; int8_t iv; uint8_t vel; } ork_pev_t;   /* vel: 100 = the key's velocity */
 typedef struct { uint16_t first, n, len; } ork_phrase_t;   /* its notes in PEV, its length (ticks) */
 extern struct ork_settings ork_set;
 /* What the player reports (written by the audio ISR). */
