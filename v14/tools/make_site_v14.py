@@ -6,6 +6,8 @@
   webapp/installer/index.html        web/index_v14.html, self-contained (fm1pkg.js, fm1ota.js, orkbank.js inlined)
   firmware/orkest-v14-VER.fwsc       the firmware (FM1 Open + Orkest)
   firmware/orkest-bank-VER.bin       the orchestra bank
+  firmware/FM-1_015.fwsc             M-VAVE's original V15 (FM1 Open's SDK, Apache-2.0): the way back, and the step
+                                     from Felucca-based firmware to V14
   firmware/v14/                      the licences that travel with them
 
   make_site_v14.py FIRMWARE.fwsc BANK.bin VERSION OUT_DIR
@@ -43,8 +45,13 @@ def main(fw, bank, version, out):
     fw_name, bank_name = f"orkest-v14-{ver}.fwsc", f"orkest-bank-{ver}.bin"
     html = (WEB / "index_v14.html").read_text(encoding="utf-8")
     lib = "\n".join(strip_module((WEB / f).read_text(encoding="utf-8")) for f in ("fm1pkg.js", "fm1ota.js", "orkbank.js"))
-    meta = json.dumps({"version": version, "product": product, "pkg": "../../firmware/" + fw_name,
-                       "bank": "../../firmware/" + bank_name, "bankBytes": len(bnk)})
+    ident = json.loads((V14 / "build" / "dx7" / "build-identity.json").read_text())   # tools/build_open.py
+    if ident["product"] != product or not re.fullmatch(r"[0-9a-f]{64}", ident["build_id"]):
+        raise SystemExit("build-identity.json does not belong to this package")
+    meta = json.dumps({"version": version, "product": product, "buildId": ident["build_id"],
+                       "pkg": "../../firmware/" + fw_name,
+                       "bank": "../../firmware/" + bank_name, "bankBytes": len(bnk),
+                       "stock": "../../firmware/FM-1_015.fwsc"})
     for mark in ("/*LIB*/", "/*META*/"):
         if html.count(mark) != 1:
             raise SystemExit(f"index_v14.html must contain {mark} once")
@@ -57,6 +64,7 @@ def main(fw, bank, version, out):
     (inst / "index.html").write_text(html, encoding="utf-8")
     shutil.copy(fw, fwd / fw_name)
     shutil.copy(bank, fwd / bank_name)
+    shutil.copy(V14 / "sdk" / "firmware" / "FM-1_015.fwsc", fwd / "FM-1_015.fwsc")   # M-VAVE's V15, Apache-2.0
     docs = {"LICENSE.md": V14 / "LICENSE.md", "THIRD_PARTY.md": V14 / "THIRD_PARTY.md", "GPL-3.0.txt": ROOT / "LICENSE",
             "SAMPLES-ATTRIBUTION.txt": ROOT / "assets" / "samples-cc0" / "ATTRIBUTION.txt",
             "Apache-2.0.txt": ROOT / "LICENSES" / "Apache-2.0.txt"}
@@ -67,7 +75,8 @@ def main(fw, bank, version, out):
         '<li><a href="LICENSE.md">LICENSE.md</a>: FM1 Open APP, GPL-3.0 with the FM1 SDK linking exception (M-VAVE)</li>'
         '<li><a href="THIRD_PARTY.md">THIRD_PARTY.md</a>: the FM1 SDK (binary) and its components</li>'
         '<li><a href="GPL-3.0.txt">GPL-3.0</a>: Orkest</li>'
-        '<li><a href="Apache-2.0.txt">Apache-2.0</a>: the boot and update files in the package</li>'
+        '<li><a href="Apache-2.0.txt">Apache-2.0</a>: the boot and update files in the package, and M-VAVE\'s original '
+        'V15 firmware (FM-1_015.fwsc, from FM1 Open\'s SDK, unmodified)</li>'
         '<li><a href="SAMPLES-ATTRIBUTION.txt">Samples</a>: VSCO 2 Community Edition, CC0 1.0</li></ul>'
         '<p>Source: <a href="https://github.com/Plieuw/orkest">github.com/Plieuw/orkest</a> (v14/)</p>\n', encoding="utf-8")
     (out / "index.html").write_text(

@@ -305,6 +305,7 @@ def main():
         "const unsigned char fm1_build_id[32] = {" + ",".join("0x" + bid[i:i + 2] for i in range(0, 64, 2)) + "};\n"
         f'const unsigned char fm1_update_identity[27] = "{product}";\n')
     run([clang, *flags, "-c", build / "generated" / "build_identity.c", "-o", build / "obj" / "build_identity.obj"])
+    (build / "build-identity.json").write_text(json.dumps({"build_id": bid, "product": product, "release": release}))
     objs.append(build / "obj" / "build_identity.obj")
     linker = (sdk / "config" / "linker.ld.in").read_text().replace("@SBC_DECODER@", "sbc_decoder\n") \
         .replace("@ACL_TX_EXTRA@", " + 1024").replace("@ACL_RX_EXTRA@", " + 4096")

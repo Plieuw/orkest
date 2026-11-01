@@ -45,8 +45,6 @@
   <details style="margin-top:24px">
     <summary data-t="stockTitle"></summary>
     <p class="small" data-t="back"></p>
-    <p class="small"><a href="https://www.m-vave.com/download" target="_blank" rel="noopener">M-VAVE Downloads</a></p>
-    <p><label><span data-t="stockFile"></span><br><input id="stock-file" type="file" accept=".fwsc"></label></p>
     <p><button id="stock-go" disabled data-t="stockGo"></button></p>
   </details>
   <p class="small" style="margin-top:24px"><span data-t="classic"></span> <a href="../../klassiek/webapp/installer/">Orkest (Felucca)</a></p>
@@ -66,14 +64,16 @@ const TEXT = {
     what: "Orkest V14 is een orkest-ROMpler op M-VAVE's officiële open firmware (FM1 Open): strijkers, hout, koper, slagwerk en ensembles, met Bluetooth- en USB-MIDI. De klanken van de originele firmware (DX7, 808, 303, sequencer) zijn er niet meer in.",
     warn: "Haal de USB-kabel er niet uit tijdens het schrijven.",
     beta: "Experimentele firmware, nog niet op een FM-1 getest. Gebruik op eigen risico: de makers zijn niet aansprakelijk als je FM-1 beschadigd raakt of niet goed werkt. Mislukt een installatie en start de FM-1 niet meer, dan is herstel mogelijk met FM-1-transporter.",
-    step1: "1. Firmware", step1text: "Installeert Orkest V14. Daarna staat op het scherm NO SOUNDS tot stap 2 klaar is.",
+    step1: "1. Firmware", step1text: "Installeert Orkest V14. Draait de FM-1 nu de klassieke Orkest (of Felucca), dan zet de installer eerst de officiële V15 terug en installeert daarna V14 (twee keer schrijven, een paar minuten). Daarna staat op het scherm NO SOUNDS tot stap 2 klaar is.",
     install: "Firmware installeren",
     step2: "2. Orkestklanken", step2text: "Schrijft de orkestbank (ongeveer 400 KB) in het geheugen van de FM-1. Duurt ongeveer een minuut. Ook later opnieuw te doen, bijvoorbeeld voor nieuwe klanken.",
     bankgo: "Klanken installeren", other: "English",
-    back: "Download de officiële FM-1 V15 bij M-VAVE en kies het ongewijzigde FM-1.fwsc. De browser controleert het bestand lokaal.",
-    stockTitle: "Terug naar de officiële V15", stockFile: "Officiële FM-1.fwsc", stockGo: "Officiële V15 installeren",
-    stockValid: "Officiële V15 gecontroleerd", stockConfirm: "Orkest wordt vervangen door de officiële V15. Doorgaan?",
-    stockError: "Kan het officiële bestand niet controleren: ",
+    back: "Zet de originele firmware van M-VAVE (V15, door M-VAVE meegeleverd in FM1 Open, Apache-2.0) terug.",
+    stockTitle: "Terug naar de officiële V15", stockGo: "Officiële V15 installeren",
+    stockConfirm: "Orkest wordt vervangen door de officiële V15. Doorgaan?",
+    hop: "Stap 1 van 2: eerst de officiële V15 (de klassieke Orkest kan V14 niet direct installeren) ",
+    hop2: "Stap 2 van 2: Orkest V14 ",
+    factory: "De fabrieksklanken van V15 terugzetten",
     classic: "De eerdere Orkest (op Felucca gebouwd, eigen engine):",
     nomidi: "Dit werkt niet in deze browser. Open de pagina in Chrome of Edge.", loadfail: "Kon niet laden: ",
     start: "Bezig met starten", verify: "Controleren", loader: "Overschakelen naar update-modus", write: "Schrijven",
@@ -101,14 +101,16 @@ const TEXT = {
     what: "Orkest V14 is an orchestral ROMpler on M-VAVE's official open firmware (FM1 Open): strings, woodwinds, brass, percussion and ensembles, with Bluetooth and USB MIDI. The original firmware's sounds (DX7, 808, 303, sequencer) are not in it.",
     warn: "Do not unplug the USB cable while writing.",
     beta: "Experimental firmware, not yet tested on an FM-1. Use at your own risk: the authors accept no responsibility if your FM-1 is damaged or misbehaves. If an install fails and the FM-1 no longer starts, FM-1-transporter can recover it.",
-    step1: "1. Firmware", step1text: "Installs Orkest V14. The screen then shows NO SOUNDS until step 2 is done.",
+    step1: "1. Firmware", step1text: "Installs Orkest V14. If the FM-1 runs classic Orkest (or Felucca), the installer first puts back official V15, then installs V14 (two writes, a few minutes). The screen then shows NO SOUNDS until step 2 is done.",
     install: "Install firmware",
     step2: "2. Orchestra sounds", step2text: "Writes the orchestra bank (about 400 KB) into the FM-1's memory. Takes about a minute. Can be repeated later, e.g. for new sounds.",
     bankgo: "Install sounds", other: "Nederlands",
-    back: "Get official FM-1 V15 from M-VAVE and select the unmodified FM-1.fwsc. The browser validates it locally.",
-    stockTitle: "Return to official V15", stockFile: "Official FM-1.fwsc", stockGo: "Install official V15",
-    stockValid: "Official V15 verified", stockConfirm: "Orkest will be replaced by official V15. Continue?",
-    stockError: "Cannot validate official firmware: ",
+    back: "Puts M-VAVE's original firmware back (V15, shipped by M-VAVE in FM1 Open, Apache-2.0).",
+    stockTitle: "Return to official V15", stockGo: "Install official V15",
+    stockConfirm: "Orkest will be replaced by official V15. Continue?",
+    hop: "Step 1 of 2: official V15 first (classic Orkest cannot install V14 directly) ",
+    hop2: "Step 2 of 2: Orkest V14 ",
+    factory: "Restoring V15's factory voices",
     classic: "The earlier Orkest (built on Felucca, its own engine):",
     nomidi: "This browser cannot do it. Open the page in Chrome or Edge.", loadfail: "Could not load: ",
     start: "Starting", verify: "Verifying", loader: "Switching to update mode", write: "Writing",
@@ -147,23 +149,23 @@ const sayK = (k, arg = "") => { lastKey = k; lastArg = arg; $("status").textCont
 const say = (txt) => { lastKey = null; $("status").textContent = txt; };
 const log = (x) => { $("log").textContent += x + "\n"; };
 const meta = /*META*/;
-let image = null, bank = null, stock = null, stockEpoch = 0, writing = false;
+let image = null, bank = null, stock = null, writing = false;
 const lock = (on) => {
   writing = on;
-  $("go").disabled = on || !image; $("bank").disabled = on || !bank;
-  $("stock-go").disabled = on || !stock; $("stock-file").disabled = on;
+  $("go").disabled = on || !image; $("bank").disabled = on || !bank; $("stock-go").disabled = on || !stock;
 };
 window.addEventListener("beforeunload", (e) => { if (writing) { e.preventDefault(); e.returnValue = t("leave"); } });
 
 (async () => {
   if (!navigator.requestMIDIAccess) { sayK("nomidi"); return; }
   try {
-    const [rp, rb] = await Promise.all([fetch(meta.pkg), fetch(meta.bank)]);
-    if (!rp.ok) throw new Error(`${meta.pkg}: HTTP ${rp.status}`);
-    if (!rb.ok) throw new Error(`${meta.bank}: HTTP ${rb.status}`);
+    const [rp, rb, rs] = await Promise.all([fetch(meta.pkg), fetch(meta.bank), fetch(meta.stock)]);
+    for (const [r, u] of [[rp, meta.pkg], [rb, meta.bank], [rs, meta.stock]])
+      if (!r.ok) throw new Error(`${u}: HTTP ${r.status}`);
     const pkg = new Uint8Array(await rp.arrayBuffer());
     bank = new Uint8Array(await rb.arrayBuffer());
     if (productOf(pkg) !== meta.product || bank.length !== meta.bankBytes) { sayK("badpkg"); return; }
+    stock = await validateStockPackage(new Uint8Array(await rs.arrayBuffer()));
     image = logicalImage(pkg);
     say(`Orkest ${meta.version}`);
     lock(false);
@@ -185,14 +187,35 @@ function step() {
     if (k === "done") { $("bar").value = 100; sayK("done"); }
   };
 }
-async function installFirmware(img, product, doneKey) {
+// Felucca-based firmware (classic Orkest, Felucca: FM-1_9xx) stages only packages in V15's layout: from it, official
+// V15 goes on first (its updater takes FM1 Open packages, as M-VAVE's own workbench does), then the target
+async function installFirmware(img, product, doneKey, buildId, after) {
   const midi = await midiAccess();
   if (!midi) return;
   try {
     const up = new Updater(midi, log);
     const ota = await up.find((id) => /^ota-/i.test(id.model));
-    if (ota) { ota.link.close(); sayK((await up.resume(img, step(), product)) ? doneKey : "stopped"); }
-    else { await up.install(img, product, step()); sayK(doneKey); }
+    if (ota) {
+      ota.link.close();
+      if (!(await up.resume(img, step(), product))) { sayK("stopped"); return; }
+      if (after) await after(up);
+      sayK(doneKey);
+      return;
+    }
+    const dev = await up.find((id) => !/^ota-/i.test(id.model));
+    if (!dev) throw Object.assign(new Error("FM-1 not found"), { code: "notfound" });
+    dev.link.close();
+    log(`device: ${dev.id.text}`);
+    if (/^FM-1_8/.test(product) && /^FM-1_9\d\d$/.test(dev.id.text)) {
+      const s = step();
+      await up.install(stock.image, stock.product, (k, a) => { s(k, a); if (k !== "done") lastArg = ""; if (lastKey) $("status").textContent = t("hop") + "— " + t(lastKey); });
+      await new Promise((r) => setTimeout(r, 3000));
+      const s2 = step();
+      await up.install(img, product, (k, a) => { s2(k, a); if (lastKey) $("status").textContent = t("hop2") + "— " + t(lastKey); }, buildId);
+    } else
+      await up.install(img, product, step(), buildId);
+    if (after) await after(up);
+    sayK(doneKey);
   } catch (e) {
     if (e && e.code && TEXT[lang][e.code]) sayK(e.code, e.detail || ""); else sayK("error", e && e.message);
     log(String(e && e.stack || e));
@@ -200,7 +223,7 @@ async function installFirmware(img, product, doneKey) {
 }
 $("go").addEventListener("click", async () => {
   if (writing) return;
-  lock(true); await installFirmware(image, meta.product, "fwdone"); lock(false);
+  lock(true); await installFirmware(image, meta.product, "fwdone", meta.buildId); lock(false);
 });
 $("bank").addEventListener("click", async () => {
   if (writing) return;
@@ -222,19 +245,14 @@ $("bank").addEventListener("click", async () => {
   }
   lock(false);
 });
-$("stock-file").addEventListener("change", async () => {
-  const epoch = ++stockEpoch, file = $("stock-file").files[0]; stock = null; lock(false);
-  if (!file) return;
-  try {
-    if (file.size !== STOCK_V15_SIZE) throw new Error("FM-1 V15 / FM-1.fwsc");
-    const verified = await validateStockPackage(new Uint8Array(await file.arrayBuffer()));
-    if (epoch !== stockEpoch) return;
-    stock = verified; sayK("stockValid"); lock(false);
-  } catch (e) { if (epoch === stockEpoch) sayK("stockError", e.message); }
-});
 $("stock-go").addEventListener("click", async () => {
   if (!stock || writing || !confirm(t("stockConfirm"))) return;
-  lock(true); await installFirmware(stock.image, stock.product, "done"); lock(false);
+  lock(true);
+  await installFirmware(stock.image, stock.product, "done", stock.sha256, async (up) => {
+    sayK("factory");
+    await up.restoreFactory(stock.factory, (n, total) => { $("bar").value = (n / total) * 100; });
+  });
+  lock(false);
 });
 </script>
 </body>

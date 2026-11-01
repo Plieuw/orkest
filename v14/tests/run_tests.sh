@@ -16,3 +16,5 @@ tail -1 build/host/san.log
 echo "== the browser's bank upload (web/orkbank.js) against the firmware's (app/orkest_bank.c)"
 cc -std=gnu11 -O1 -Wall $INC -o build/host/bank_device tests/bank_device.c app/orkest_bank.c app/orkest_player.c
 node tests/upload_test.mjs
+echo "== update frames: web/fm1ota.js against M-VAVE's WebUpdate.js"
+node tests/frame_test.mjs

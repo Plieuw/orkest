@@ -65,6 +65,34 @@ function parseIdentity(pkt) {
   return m ? { text: txt, model: m[1], version: parseInt(m[2], 10) } : null;
 }
 
+// a command frame of the FM-1 protocol: F0 pack7(00 59 cmd len24 payload ~sum) F7 (M-VAVE's FM1 Open uses the same)
+function frame(cmd, payload = []) {
+  let s = 0;
+  for (const b of payload) s = (s + b) & 0xFF;
+  return [0xF0, ...pack7([0x00, 0x59, cmd, payload.length & 0xFF, (payload.length >> 8) & 0xFF, 0, ...payload, ~s & 0xFF]), 0xF7];
+}
+function parseFrame(pkt) {
+  if (pkt[0] !== 0xF0 || pkt[pkt.length - 1] !== 0xF7) return null;
+  const u = unpack7(pkt.slice(1, -1));
+  if (u.length < 7 || u[0] !== 0 || u[1] !== 0x59 || (u[3] | (u[4] << 8) | (u[5] << 16)) !== u.length - 7) return null;
+  let s = 0;
+  for (let i = 6; i < u.length; i++) s = (s + u[i]) & 0xFF;
+  return s === 0xFF ? { cmd: u[2], data: u.slice(6, -1) } : null;
+}
+// send a command and wait for the reply with that command number (null: none in time)
+async function query(link, cmd, payload = [], ms = 1500, replyCmd = cmd) {
+  link.drain();
+  if (!link.send(frame(cmd, payload))) return null;
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    const p = await link.read(Math.min(250, end - Date.now()));
+    const f = p && parseFrame(p);
+    if (f && f.cmd === replyCmd) return f.data;
+  }
+  return null;
+}
+const hexBytes = (h) => h.match(/../g).map((x) => parseInt(x, 16));
+
 // one MIDI in/out pair with a SysEx queue
 class Link {
   constructor(input, output) {
@@ -170,14 +198,33 @@ export class Updater {
     }
   }
 
-  // full install: running firmware -> loader -> new firmware
-  async install(image, product, onStep) {
+  // FM1 Open (M-VAVE, identity FM-1_8xxxxxx) takes an update only after it was armed with the package's size and
+  // build hash (as M-VAVE's workbench: command 49 capability, command 50 arm). Firmware without command 49 (V15,
+  // Felucca) does not answer it: nothing to arm.
+  async arm(link, image, buildId) {
+    const cap = await query(link, 49, [], 1500);
+    if (!cap) return false;
+    if (cap.length !== 47 || String.fromCharCode(...cap.slice(0, 4)) !== "FMC1") throw fail("stopped", "the FM-1 answered the capability query unexpectedly");
+    if (cap[6] !== 0) throw fail("stopped", "the FM-1 is busy with another update");
+    if (!buildId) throw fail("stopped", "this package has no build hash to arm FM1 Open with");
+    const n = image.length;
+    const ack = await query(link, 50, [1, cap[5], n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255, ...hexBytes(buildId)], 3000);
+    if (!ack || ack.length !== 1 || ack[0] !== 0) throw fail("stopped", "the FM-1 refused the package" + (ack ? ` (${ack[0]})` : ""));
+    this.log(`armed: family ${cap[5]}, ${n} B`);
+    return true;
+  }
+
+  // full install: running firmware -> loader -> new firmware. buildId: the package's build hash (hex), for FM1 Open
+  async install(image, product, onStep, buildId = null) {
     const step = onStep || (() => {});
     const dev = await this.find((id) => !IS_OTA(id));
     if (!dev) throw fail("notfound", "FM-1 not found (USB cable, and no other app using it?)");
     const [model] = product.split("_");
     if (dev.id.model !== model) { dev.link.close(); throw fail("model", `the device is ${dev.id.text}, the package is for ${product}`); }
     step("start", dev.id.text);
+    if (/^FM-1_8\d{6}$/.test(dev.id.text)) {
+      try { await this.arm(dev.link, image, buildId); } catch (e) { dev.link.close(); throw e; }
+    }
     dev.link.send(UPGRADE);
     await sleep(2000);
     const s1 = await this.serve(dev.link, image, 0xE0000000, 8000, (n) => step("verify", n));
@@ -197,6 +244,26 @@ export class Updater {
     if (back.id.text !== product) throw fail("mismatch", `installed, but the device reports ${back.id.text}`, back.id.text);
     step("done", back.id.text);
     return back.id.text;
+  }
+
+  // official V15's four factory DX7 voice banks back into its flash (16 KiB, 512 bytes a message; V15 answers each
+  // with command 0, status 0), as M-VAVE's workbench does after putting V15 back
+  async restoreFactory(factory, onProgress) {
+    const dev = await this.waitFor((id) => id.text === "FM-1_015", 20000);
+    if (!dev) throw fail("noreturn", "official V15 did not answer");
+    const ack = async (cmd, payload) => {
+      const r = await query(dev.link, cmd, payload, 10000, 0);
+      if (!r || r.length !== 1 || r[0] !== 0) throw fail("stopped", "V15 did not accept its factory voices");
+    };
+    try {
+      for (let bank = 0; bank < 16384; bank += 4096) {
+        await ack(33, [5, 0, bank >>> 8, 0, 0]);
+        for (let off = bank; off < bank + 4096; off += 512) {
+          await ack(34, [5, off & 255, off >>> 8, 0, 0, 0, 2, 0, ...factory.subarray(off, off + 512)]);
+          if (onProgress) onProgress(off + 512, 16384);
+        }
+      }
+    } finally { dev.link.close(); }
   }
 
   // step 2 with the loader found by find()/waitFor()

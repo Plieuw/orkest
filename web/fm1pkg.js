@@ -242,7 +242,23 @@ export async function validateStockPackage(bytes) {
       pkg.appBase !== 16384 || pkg.appOff !== 16672 || pkg.app.size !== STOCK_APP_SIZE ||
       !pkg.entries.some((e) => e.type === 100 && e.name === "ota.bin" && e.size === 19969))
     throw new Error("The official firmware has an unsupported FM-1 layout.");
-  return { product: pkg.product, image: logicalImage(bytes), sha256: STOCK_V15_SHA256 };
+  return { product: pkg.product, image: logicalImage(bytes), sha256: STOCK_V15_SHA256, factory: await stockFactory(bytes, pkg) };
+}
+
+// V15's four factory DX7 voice banks (16 KiB, the package's encrypted USR entry), as M-VAVE's FM1 Open workbench
+// restores them after putting V15 back: firmware that used the user flash (FM1 Open, Orkest V14) overwrote them
+export const STOCK_FACTORY_SHA256 = "ecad0b8620f9d784d46c8da1e3c5de02c40214649ed8dec218026431046aad25";
+export async function stockFactory(bytes, pkg = new Package(bytes)) {
+  const e = pkg.entries.find((x) => x.type === 50 && x.name === "USR");
+  if (!e) throw new Error("official V15: no factory voice banks");
+  const stored = u32(e.plain, 16), size = e.size, img = logicalImage(bytes);
+  if (size !== 73226 || stored !== 73248 || u32(e.plain, 24) !== stored) throw new Error("official V15: factory voice banks unexpected");
+  const dec = img.slice(e.dataOff, e.dataOff + stored);
+  for (let i = 0; i < stored; i += 32) enc(dec, i, Math.min(32, stored - i), 0x980F ^ ((e.dataOff + i) >>> 2));
+  if (crc16(dec.subarray(0, size)) !== e.dcrc) throw new Error("official V15: factory voice banks damaged");
+  const factory = dec.slice(0, 16384);
+  if (await sha256hex(factory) !== STOCK_FACTORY_SHA256) throw new Error("official V15: factory voice banks differ");
+  return factory;
 }
 
 // official V15 + Felucca app -> installable package (Uint8Array)
