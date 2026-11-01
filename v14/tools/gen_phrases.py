@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-only WITH GPL-3.0-linking-exception
-"""The ARP button's phrases: short figures (at most two bars) after public-domain composers, as note names here,
+"""The ARP button's phrases: short figures (film-score cells, ornaments, patterns), as note names here,
 written to app/orkest_phrases.inc as events relative to a reference note: the key that is pressed plays the
 reference, the phrase moves with it (a phrase in C pressed on A plays in A).
 
@@ -10,7 +10,7 @@ One note at a time: the phrases are monophonic.
 Velocity: every note gets one from where it falls (the bar's first beat strongest, then beats, eighths, sixteenths,
 the shortest notes softest) and from its line (a note above its neighbours a little stronger); after the duration, `>`
 accents a note, `_` softens it, `@NN` sets it (100 = the key's own velocity). The player scales the key's velocity by
-it.
+it. A `~` (first, after the duration) slides into the note from the one before (a portamento over up to half of it).
 
     python3 tools/gen_phrases.py [app/orkest_phrases.inc]
 """
@@ -21,47 +21,48 @@ from pathlib import Path
 TPQ = 24  # ticks a quarter note (MIDI clock)
 
 # name (<= 13 characters, the big line), what it is from (<= 20), reference note, the line (one voice: monophonic,
-# the composers' a few notes only, at most two beats; the ornaments and patterns at most six beats)
+# the film-score cells a few notes, mostly two beats or less; the ornaments and patterns at most six beats)
 PHRASES = [
-    ("PRELUDE C", "BACH BWV 846", "C4", "C4:16 E4:16 G4:16 C5:16"),
-    ("CELLO SUITE", "BACH BWV 1007", "G3", "G2:16 D3:16 B3:16 A3:16"),
-    ("INVENTION 1", "BACH BWV 772", "C4", "C4:16 D4:16 E4:16 F4:16 D4:16"),
-    ("TOCCATA", "BACH BWV 565", "D5", "A5:32 G5:32 A5:8 r:16"),
-    ("BADINERIE", "BACH BWV 1067", "B4", "B5:8 D6:16 B5:16 F#5:8"),
-    ("JESU JOY", "BACH BWV 147", "G4", "G4:8 A4:8 B4:8 D5:8"),
-    ("MENUET G", "BACH ANH 114", "G4", "D5:8 G4:16 A4:16 B4:16 C5:16"),
-    ("FUGUE G MIN", "BACH BWV 578", "G4", "G4:8 D5:8 Bb4:8 A4:8"),
-    ("CANON BASS", "PACHELBEL", "D3", "D3:8 A2:8 B2:8 F#2:8"),
-    ("CANON", "PACHELBEL", "D5", "F#5:8 E5:8 D5:8 C#5:8"),
-    ("PRIMAVERA", "VIVALDI RV 269", "E4", "G#4:8 G#4:8 F#4:16 E4:16 B4:8"),
-    ("HALLELUJAH", "HANDEL HWV 56", "D5", "D5:8> A4:16. B4:32_ A4:8>"),
-    ("SURPRISE", "HAYDN HOB I 94", "C4", "C4:16 C4:16 E4:16 E4:16 G4:8"),
-    ("EMPEROR", "HAYDN HOB III 77", "G4", "G4:8. A4:16 B4:8"),
-    ("NACHTMUSIK", "MOZART K 525", "G4", "G4:8 r:16 D4:16 G4:8"),
-    ("NACHTMUSIK 2", "MOZART K 525", "G4", "G4:16 D4:16 G4:16 B4:16 D5:8"),
-    ("SYMPHONY 40", "MOZART K 550", "G4", "Eb5:16 D5:16 D5:8"),
-    ("ALLA TURCA", "MOZART K 331", "A4", "B4:16 A4:16 G#4:16 A4:16 C5:8"),
-    ("TWINKLE", "MOZART K 265", "C4", "C4:8 C4:8 G4:8 G4:8"),
-    ("SONATA C", "MOZART K 545", "C5", "C5:8 E5:16 G5:16"),
-    ("FUR ELISE", "BEETHOVEN WOO 59", "A4", "E5:16 D#5:16 E5:16 D#5:16 E5:16"),
-    ("FIFTH", "BEETHOVEN OP 67", "C4", "r:16 G4:16> G4:16> G4:16> Eb4:4>"),
-    ("ODE TO JOY", "BEETHOVEN OP 125", "C4", "E4:8 E4:8 F4:8 G4:8"),
-    ("MOONLIGHT", "BEETHOVEN OP 27 2", "C#4", "G#3:8t C#4:8t E4:8t"),
-    ("SEVENTH", "BEETHOVEN OP 92", "A3", "E4:8> E4:16_ E4:16_ E4:8"),
-    ("CAPRICE 24", "PAGANINI OP 1", "A4", "A4:8 A4:16 C5:16 B4:16 A4:16"),
-    ("WILLIAM TELL", "ROSSINI 1829", "C4", "G4:16_ G4:16_ G4:8> C5:8>"),
-    ("FUNERAL MARCH", "CHOPIN OP 35", "Bb3", "Db4:8. C4:16 C4:8. Bb3:16"),
-    ("DONNA MOBILE", "VERDI RIGOLETTO", "B3", "F#4:16 F#4:16 F#4:16 A4:16. G#4:32 E4:8"),
-    ("VALKYRIES", "WAGNER WWV 86B", "B4", "F#4:16_ B4:8.> F#4:16_ B4:8.>"),
-    ("BLUE DANUBE", "STRAUSS OP 314", "D4", "D4:8_ F#4:8 A4:8> A4:8"),
-    ("LULLABY", "BRAHMS OP 49 4", "C4", "E4:8 E4:8 G4:4"),
-    ("PROMENADE", "MUSSORGSKY 1874", "Bb4", "G4:8 F4:8 Bb4:8 C5:16 F5:16"),
-    ("HABANERA", "BIZET CARMEN", "D5", "D5:8 C#5:16 C5:16 B4:16 Bb4:16"),
-    ("MORNING", "GRIEG OP 46", "E4", "B4:8 G#4:8 F#4:8 E4:8"),
-    ("MOUNTAIN KING", "GRIEG OP 46", "B3", "B3:16 C#4:16 D4:16 E4:16 F#4:8"),
-    ("SWAN LAKE", "TCHAIKOVSKY OP 20", "B4", "F#5:8 B4:32 C#5:32 D5:32 E5:32 F#5:8"),
-    ("NEW WORLD", "DVORAK OP 95", "C4", "E4:8. G4:16 G4:8"),
-    ("GYMNOPEDIE", "SATIE 1888", "D5", "F#5:8 A5:8 G5:8 F#5:8"),
+    # film-score cells (original: idioms, no themes), a few notes, mostly two beats or less; the key is the tonic
+    ("OSTINATO", "MINOR 16THS", "C4", "C4:16> C4:16_ Eb4:16 C4:16_ G4:16> C4:16_ Eb4:16 C4:16_"),
+    ("OCTAVE DRIVE", "OSTINATO", "C4", "C4:16> C5:16_ C4:16 C5:16_ C4:16> C5:16_ Bb4:16 C5:16_"),
+    ("GALLOP MINOR", "ACTION", "C4", "C4:8> C4:16_ C4:16_ Eb4:8> Eb4:16_ Eb4:16_"),
+    ("DRIVE 332", "OSTINATO", "C4", "C4:16> C4:16_ Eb4:16_ C4:16> C4:16_ Eb4:16_ G4:16> F4:16_"),
+    ("EPIC SIGH", "MINOR SIXTH", "C4", "Ab4:8> G4:8 Ab4:8> G4:8"),
+    ("LAMENT", "1 B6 5", "C4", "C5:8 Ab4:8 G4:4.~"),
+    ("TENSION", "MINOR RISE", "C4", "C4:16 Eb4:16 G4:16 Ab4:16 G4:16 Eb4:16"),
+    ("FANFARE", "HEROIC FIFTH", "C4", "C4:16_ G4:8.> C5:4~>"),
+    ("BRASS CALL", "TRIPLET PICKUP", "C4", "G3:8t@80 G3:8t@88 C4:8t@96 G4:4>"),
+    ("WONDER", "LYDIAN", "C5", "C5:16 D5:16 E5:16 F#5:16 G5:8"),
+    ("MAGIC", "LYDIAN FIFTHS", "C4", "C4:16 G4:16 D5:16 F#5:16"),
+    ("SOARING", "SUS2", "C4", "C4:16 D4:16 G4:16 C5:16 D5:16 G5:16"),
+    ("SWOOP", "SLIDE UP A FIFTH", "C4", "C4:8_ G4:4.~>"),
+    ("THREAT", "PHRYGIAN", "C4", "C4:16> Db4:16 C4:16 Db4:16_ C4:8>"),
+    ("DANGER", "TRITONE", "C4", "C4:8> F#4:8> C4:16_ F#4:16_"),
+    ("TRANSFORM", "MEDIANT", "C4", "C4:16 E4:16 G4:16 Ab4:16 C5:16 Eb5:16"),
+    ("AWE", "MEDIANT", "C4", "C4:16 E4:16 G4:16 E4:16 Eb4:16 G4:16 Bb4:16 G4:16"),
+    ("BRAAM", "LOW HITS", "C4", "C3:8> C3:16_ C3:16_ C3:4>"),
+    ("TRAILER", "HIT AND FILL", "C4", "C4:8@127 r:8 C4:16@70 C4:16@85 C4:8@127"),
+    ("BUILD", "MINOR RISER", "C4", "C4:32@50 D4:32@58 Eb4:32@66 F4:32@74 G4:32@82 Ab4:32@90 Bb4:32@100 C5:8@124"),
+    ("DROP", "FALL TO A HIT", "C5", "C5:32@120 G4:32@100 Eb4:32@90 C4:8@115"),
+    ("SNEAK", "STACCATO", "C4", "C4:16@90 r:16 C4:16@60 r:16 Eb4:16@90 r:16 D4:16@60 r:16"),
+    ("CREEP", "LOW WALK", "C3", "C3:8 G3:8 Ab3:8 G3:8"),
+    ("NOBLE", "HORN SWELL", "C4", "C4:8@70 G4:8@95 E4:4@115"),
+    ("TRIUMPH", "MAJOR", "C4", "G3:16_ C4:16 E4:16 G4:16 C5:4>"),
+    ("FALL OFF", "SLIDE DOWN", "C5", "C5:8.> G4:16~_ r:4"),
+    ("EMOTION", "MINOR NINTH", "C4", "C4:16 G4:16 D5:16 Eb5:16"),
+    ("UPLIFT", "ADD NINE", "C4", "C4:16 G4:16 D5:16 E5:16"),
+    ("EPIC LINE", "I VI VII I", "C4", "C4:8 Ab4:8 Bb4:8 C5:8>"),
+    ("ADVENTURE", "DORIAN", "C4", "C4:16 D4:16 Eb4:16 F4:16 G4:16 A4:16 G4:8"),
+    ("CHASE", "TRIPLET DRIVE", "C4", "C4:8t> C4:8t_ Eb4:8t C4:8t> C4:8t_ G4:8t"),
+    ("WAIL", "MINOR SLIDES", "C5", "C5:8 Eb5:8~ D5:8~ C5:8~"),
+    ("STING", "STINGER", "C5", "C5:16@127 C4:16@60 r:8"),
+    ("SIREN", "SLIDE UP AND DOWN", "C4", "C4:8 Ab4:8~ C4:8~ Ab4:8~"),
+    ("DEPTH", "LOW PULSE", "C4", "C3:8> C3:8_ C3:8 C3:8_"),
+    ("QUEST", "CALL UP", "C4", "C4:8 D4:16 Eb4:16 G4:4>"),
+    ("LONGING", "SIGH", "C5", "Eb5:8 D5:8~ C5:4~"),
+    ("SLIDE OCTAVE", "PORTAMENTO", "C4", "C4:8 C5:4.~>"),
+    ("IMPACT ROLL", "ROLL TO A HIT", "C4", "C4:32@50 C4:32@60 C4:32@70 C4:32@80 C4:32@90 C4:32@100 C4:32@110 C4:8@127"),
     # ornaments and patterns (from the key: C4 here)
     ("TRILL", "WHOLE STEP", "C4", "C4:32 D4:32 C4:32 D4:32 C4:32 D4:32 C4:32 D4:32"),
     ("TRILL HALF", "HALF STEP", "C4", "C4:32 Db4:32 C4:32 Db4:32 C4:32 Db4:32 C4:32 Db4:32"),
@@ -138,15 +139,15 @@ def phrase(ref, line):
     r, ev, at, marks = midi(ref), [], 0, []
     for tok in line.split():
         note, dur = tok.rsplit(":", 1)
-        m = re.fullmatch(r"([0-9t.]+)(>|_)?(?:@(\d+))?", dur)
+        m = re.fullmatch(r"([0-9t.]+)(~)?(>|_)?(?:@(\d+))?", dur)
         if not m:
             raise SystemExit(f"bad token {tok!r}")
         d = ticks(m[1])
         if note != "r":
             if "+" in note:
                 raise SystemExit(f"{tok}: the phrases are monophonic")
-            ev.append([at, d, midi(note) - r, metric(at)])
-            marks.append((m[2], m[3]))
+            ev.append([at, d, midi(note) - r, metric(at), 1 if m[2] and ev else 0])
+            marks.append((m[3], m[4]))
         at += d
     for i, e in enumerate(ev):         # a peak in the line: a little stronger
         prev = ev[i - 1][2] if i else None
@@ -171,7 +172,7 @@ def main(argv):
         assert len(name) <= 13 and len(what) <= 20, name
         ev, length = phrase(ref, line)
         assert length <= 6 * TPQ, (name, length)   # six beats at most
-        assert all(0 < d <= 255 and -48 <= iv <= 48 for _, d, iv, _v in ev), name
+        assert all(0 < d <= 255 and -48 <= iv <= 48 for _, d, iv, _v, _s in ev), name
         heads.append((len(evs), len(ev), length))
         evs += ev
     lines = ["/* generated by v14/tools/gen_phrases.py: the ARP button's phrases (ticks: 24 a quarter note) */",
@@ -179,7 +180,7 @@ def main(argv):
              "#ifdef ORK_PHRASE_EVENTS",
              f"static FM1_AUDIO_DATA const ork_pev_t PEV[{len(evs)}] = {{"]
     for i in range(0, len(evs), 8):
-        lines.append("    " + " ".join(f"{{{a}, {d}, {iv}, {v}}}," for a, d, iv, v in evs[i:i + 8]))
+        lines.append("    " + " ".join(f"{{{a}, {d}, {iv}, {v}, {sl}}}," for a, d, iv, v, sl in evs[i:i + 8]))
     lines += ["};", f"static FM1_AUDIO_DATA const ork_phrase_t PHRASE[ORK_NPHRASE] = {{"]
     lines += [f"    {{{f}, {n}, {l}}},   /* {nm} */" for (f, n, l), (nm, *_r) in zip(heads, PHRASES)]
     lines += ["};", "#endif", "#ifdef ORK_PHRASE_NAMES",

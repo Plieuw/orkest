@@ -56,6 +56,8 @@ typedef struct {
     uint16_t lp_a;               /* velocity -> tone: its lowpass coefficient, Q15 (32767: open) */
     uint8_t src;                 /* who started it: 0 a key (or MIDI), else ARP's runner + 1 */
     uint32_t nid;                /* the note it belongs to (its layers share it): polyphony counts notes */
+    uint32_t g_t, g_l;           /* a slide: the transient's and the sustain's steps it starts from */
+    uint16_t g_n, g_total;       /* the slide's blocks to go, of */
     int32_t lp1, lp2;            /* the lowpass's two poles */
 } voice_t;
 /* velocity -> tone: soft notes duller, hard ones brighter (orkest_tone.inc: 2 poles, 600 Hz .. open) */
@@ -214,6 +216,19 @@ static uint8_t layer_inst[NVOICE];               /* the instrument a voice plays
 #define ORK_SEAT_DATA FM1_AUDIO_DATA  /* (the audio ISR: in SRAM) */
 #define ORK_SEAT_CODE FM1_AUDIO_CODE
 #include "orkest_seats.inc"
+/* slides only where the instrument can: bowed strings (not pizzicato or spiccato) and the trombone */
+static FM1_AUDIO_DATA const char SLIDE_INST[7][8] = {"VIOLINS", "VIOLAS", "CELLI", "BASSES", "SOLO", "TREMOLO", "TROMBON"};
+static FM1_AUDIO_CODE int can_slide(const char *name)
+{
+    uint32_t i, k;
+    for (i = 0; i < 7u; i++) {
+        for (k = 0; k < 7u && SLIDE_INST[i][k] && name[k] == SLIDE_INST[i][k]; k++)
+            ;
+        if (k == 7u || !SLIDE_INST[i][k])
+            return 1;
+    }
+    return 0;
+}
 #define NPOLY 16                                 /* notes at once; a new one past it ends the oldest */
 static uint32_t note_clock;
 static FM1_AUDIO_CODE void release_voice(voice_t *v, uint32_t time, int tail);
@@ -240,7 +255,9 @@ static FM1_AUDIO_CODE void poly_limit(void)
         if (voice[i].nid == oldest && (voice[i].stage == ST_ATTACK || voice[i].stage == ST_SUSTAIN))
             release_voice(&voice[i], 8u, 0);
 }
-static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel, uint32_t src)
+/* from: a slide from that note (its pitch gliding to `note` over `glide` blocks), or -1 */
+static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel, uint32_t src, int32_t from,
+                                     uint32_t glide)
 {
     const ork_patch_t *p;
     uint32_t i, l, vq = vel * vel * 2u;         /* velocity curve, Q15: 127 -> 32258, 100 -> 20000 */
@@ -276,6 +293,14 @@ static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel
         stream_start(&v->t, zt->t_off, zt->t_n, 0, 0, 0, 0, pitch_step(zt->rate, zt->root16, n2));
         if (z->flags & 1u)
             stream_start(&v->l, z->l_off, z->l_n, z->l_ls, z->l_n, z->l_pred, z->l_idx, pitch_step(z->rate, z->root16, n2));
+        v->g_n = 0;
+        if (from >= 0 && glide && can_slide(in->name)) {   /* a slide (where it can): from the old note's pitch */
+            int32_t f2 = from + ly->tr;
+            f2 = f2 < 0 ? 0 : f2 > 127 ? 127 : f2;
+            v->g_t = pitch_step(zt->rate, zt->root16, f2);
+            v->g_l = pitch_step(z->rate, z->root16, f2);
+            v->g_n = v->g_total = (uint16_t)(glide > 200u ? 200u : glide);
+        }
         v->w_t0 = z->w_t0;
         v->w_t1 = z->w_t1;
         v->lpos = 0;
@@ -315,7 +340,7 @@ static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel
     ork_stat.last_note = (uint8_t)note;
     ork_stat.last_vel = (uint8_t)vel;
 }
-static FM1_AUDIO_CODE void note_on(uint32_t note, uint32_t vel) { note_on_p(ork_set.patch, note, vel, 0); }
+static FM1_AUDIO_CODE void note_on(uint32_t note, uint32_t vel) { note_on_p(ork_set.patch, note, vel, 0, -1, 0); }
 /* note off: the sustain releases over the release time; the instrument's release sample (TAIL) takes over */
 static FM1_AUDIO_CODE void release_voice(voice_t *v, uint32_t time, int tail)
 {
@@ -419,6 +444,7 @@ typedef struct {
     uint8_t part;                                /* 255: ARP's own phrase and sound; else the SEQ part 0..3 */
     uint8_t patch, phrase, velo;                 /* what it plays */
     int8_t shift;                                /* its octave, semitones */
+    int16_t prev;                                /* the note it played last (a slide's start), -1 none */
     uint32_t age;                                /* when it started (the oldest gives way when all are busy) */
     uint16_t idx;                                /* the next note in the phrase */
     uint16_t vstep;                              /* the velocity pattern's next step */
@@ -454,6 +480,7 @@ static FM1_AUDIO_CODE void run_start(uint32_t key, uint32_t vel, uint32_t part)
     r->idx = 0;
     r->pos = 0;
     r->vstep = 0;
+    r->prev = -1;
     r->part = (uint8_t)part;
     if (part < 4u) {
         r->patch = (uint8_t)(ork_set.part_patch[part] - 1u);
@@ -586,7 +613,12 @@ static FM1_AUDIO_CODE void phrases(void)
                 if (n < 0 || n > 127)
                     continue;
                 run_quiet(r);                    /* one note at a time */
-                note_on_p(r->patch, (uint32_t)n, phrase_vel(r->vel, e->vel, r->velo, &r->vstep), i + 1u);
+                {   /* a slide: over half the note (in blocks at this tempo), at least ~12 ms */
+                    uint32_t gl = e->slide && r->prev >= 0 && inc ? ((uint32_t)e->len << 15) / inc : 0u;
+                    note_on_p(r->patch, (uint32_t)n, phrase_vel(r->vel, e->vel, r->velo, &r->vstep), i + 1u,
+                              e->slide ? r->prev : -1, gl < 4u && gl ? 4u : gl);
+                }
+                r->prev = (int16_t)n;
                 r->note[r->nn] = (uint8_t)n;
                 r->left[r->nn] = (int32_t)(((uint32_t)e->len * ork_set.arp_gate << 16) / 100u);
                 r->nn++;
@@ -807,6 +839,12 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
         if (v->stage == ST_OFF)
             continue;
         busy++;
+        if (v->g_n) {                               /* a slide: from the old pitch to its own, straight */
+            int32_t f = (int32_t)(((uint32_t)v->g_n << 16) / v->g_total);
+            stt = (uint32_t)((int32_t)stt + (int32_t)(((int64_t)((int32_t)v->g_t - (int32_t)stt) * f) >> 16));
+            stl = (uint32_t)((int32_t)stl + (int32_t)(((int64_t)((int32_t)v->g_l - (int32_t)stl) * f) >> 16));
+            v->g_n--;
+        }
         if (lfo_vib_q8 || lfo_trem_q15) {           /* this voice's share of the LFO, faded in after its note on */
             uint32_t amt = v->lfo_amt + ork_set.lfo_dstep;
             v->lfo_amt = (uint16_t)(amt > 65535u ? 65535u : amt);
@@ -903,4 +941,12 @@ long long ork_test_decode(unsigned zone, unsigned which, unsigned samples)
     return sum;
 }
 uint32_t ork_test_lfo_phase(void) { return lfo_phase; }
+unsigned ork_test_gliding(void)   /* voices in a slide */
+{
+    unsigned i, n = 0;
+    for (i = 0; i < NVOICE; i++)
+        if (voice[i].stage != ST_OFF && voice[i].g_n)
+            n++;
+    return n;
+}
 #endif

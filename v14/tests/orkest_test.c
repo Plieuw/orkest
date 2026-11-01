@@ -546,24 +546,27 @@ int main(int argc, char **argv)
     {
         static uint8_t seq[64];
         unsigned n = 0, t, last = 255, firsts = 0;
-        static const uint8_t PRELUDE[9] = {60, 64, 67, 72, 60, 64, 67, 72, 60};
+        static const uint8_t PRELUDE[9] = {60, 60, 63, 60, 67, 60, 63, 60, 60};   /* OSTINATO from C4 */
         int same = 1;
         use(patch_of("HARP"));
         ork_set.arp_on = 1; ork_set.arp_phrase = 0; ork_set.arp_mode = 0; ork_set.arp_speed = 1; ork_set.arp_gate = 90;
         render(10);
-        (void)ork_post(0, 0x90, 60, 100);           /* a key: PRELUDE C from C4, 120 BPM (a 16th = 125 ms) */
+        (void)ork_post(0, 0x90, 60, 100);           /* a key: OSTINATO from C4, 120 BPM (a 16th = 125 ms) */
         for (t = 0; t < 2100u * 441u / 1280u && n < sizeof seq; t++) {   /* block by block, 2.9 ms each */
+            unsigned before = ork_stat.last_note;
+            ork_stat.last_note = 255;                /* (each note on, repeated pitches too) */
             orkest_render(blk);
-            if (ork_stat.last_note != last) {
+            if (ork_stat.last_note != 255) {
                 last = ork_stat.last_note;
                 if (n == 8u) firsts = t * 128u * 1000u / 44100u;   /* the 9th note: ms after the key */
                 seq[n++] = (uint8_t)last;
-            }
+            } else
+                ork_stat.last_note = (uint8_t)before;
         }
         for (t = 0; t < 9u; t++) same &= seq[t] == PRELUDE[t];
-        check("ARP, PRELUDE C on C4: C E G C, again, again", same && n >= 9);
-        printf("  PRELUDE C: the 9th note %u ms after the key\n", firsts);
-        check("... at 120 BPM: its third time 1 s after the start (+-6 ms)", firsts >= 994u && firsts <= 1006u);
+        check("ARP, OSTINATO on C4: C C Eb C G C Eb C, again", same && n >= 9);
+        printf("  OSTINATO: the 9th note %u ms after the key\n", firsts);
+        check("... at 120 BPM: again 1 s after the start (+-6 ms)", firsts >= 994u && firsts <= 1006u);
         render(1000);
         check("... held: it loops (still playing after 2 s)", sounding() > 0);
         (void)ork_post(0, 0x80, 60, 0);
@@ -575,27 +578,46 @@ int main(int argc, char **argv)
             last = 255;
             for (blk_n = 0; blk_n < 44100u * 2u / 128u; blk_n++) {
                 while (next < blk_n * 128.0) { note(0xF8, 0, 0); next += 735.0; }
-                if (blk_n == 44100u / 2u / 128u) { (void)ork_post(0, 0x90, 60, 100); cnt = 0; last = 255; }
+                unsigned before = ork_stat.last_note;
+                if (blk_n == 44100u / 2u / 128u) { (void)ork_post(0, 0x90, 60, 100); cnt = 0; }
+                ork_stat.last_note = 255;
                 orkest_render(blk);
-                if (blk_n >= 44100u / 2u / 128u && ork_stat.last_note != last) {
-                    last = ork_stat.last_note;
-                    if (++cnt == 9u) ninth = (blk_n - 44100u / 2u / 128u) * 128u * 1000u / 44100u;
-                }
+                if (ork_stat.last_note == 255) ork_stat.last_note = (uint8_t)before;
+                else if (blk_n >= 44100u / 2u / 128u && ++cnt == 9u) ninth = (blk_n - 44100u / 2u / 128u) * 128u * 1000u / 44100u;
             }
             (void)ork_post(0, 0x80, 60, 0);
             render(2500);
             printf("  MIDI clock 150 BPM: the 9th note %u ms after the key\n", ninth);
-            check("ARP on MIDI clock 150 BPM: its third time after 0.8 s (+-10 ms)", ninth >= 790u && ninth <= 810u);
+            check("ARP on MIDI clock 150 BPM: again after 0.8 s (+-10 ms)", ninth >= 790u && ninth <= 810u);
             render(800);                             /* the clock gone */
         }
         ork_set.arp_mode = 1;                        /* ONCE: a short press plays it all, then ends */
-        ork_set.arp_phrase = 21;                     /* FIFTH: 2 s */
+        for (t = 0; t < ORK_NPHRASE && strcmp(PHRASE_NAME[t][0], "LAMENT"); t++) ;
+        ork_set.arp_phrase = (uint8_t)t;             /* LAMENT: C5 Ab4 G4, 1.25 s */
         render(10);
         (void)ork_post(0, 0x90, 62, 100); render(20); (void)ork_post(0, 0x80, 62, 0);
         render(700);
-        check("ONCE, a short press: still playing at 0.7 s (FIFTH lasts 1 s)", sounding() > 0 && ork_stat.last_note == 65);
+        check("ONCE, a short press: still playing at 0.7 s (LAMENT lasts 1.25 s)", sounding() > 0 && ork_stat.last_note == 69);
         render(4000);
         check("... then it ends by itself", sounding() == 0);
+        {   /* a slide: SWOOP (C4, then G4 sliding in) glides on VIOLINS, not on FLUTE (it cannot) */
+            extern unsigned ork_test_gliding(void);
+            unsigned q, b, w, glid[2] = {0, 0};
+            static const char *const SP[2] = {"VIOLINS", "FLUTE"};
+            for (q = 0; q < ORK_NPHRASE && strcmp(PHRASE_NAME[q][0], "SWOOP"); q++) ;
+            for (w = 0; w < 2u; w++) {
+                use(patch_of(SP[w]));
+                ork_set.arp_mode = 1; ork_set.arp_phrase = (uint8_t)q;
+                render(10);
+                (void)ork_post(0, 0x90, 60, 100); render(20); (void)ork_post(0, 0x80, 60, 0);
+                for (b = 0; b < 900u * 441u / 1280u; b++) { orkest_render(blk); if (ork_test_gliding()) glid[w]++; }
+                render(2500);
+            }
+            printf("  SWOOP: blocks gliding on VIOLINS %u, on FLUTE %u\n", glid[0], glid[1]);
+            check("a slide: VIOLINS glide into the G (about 0.375 s), FLUTE does not", glid[0] > 100u && glid[0] < 140u && !glid[1]);
+            ork_set.arp_mode = 0;
+            use(patch_of("HARP"));
+        }
         ork_set.arp_phrase = 0; render(10);
         ork_set.arp_mode = 2;                        /* LATCH: plays on after letting go, a new key takes over */
         (void)ork_post(0, 0x90, 60, 100); render(20); (void)ork_post(0, 0x80, 60, 0);
@@ -607,9 +629,11 @@ int main(int argc, char **argv)
         ork_set.arp_on = 0;
         render(3000);
         check("ARP off: everything ends", sounding() == 0);
-        {   /* SEQ scale C MAJOR: FUR ELISE from A4 (D#5 in it) stays on the white keys; off: D#5 again */
+        {   /* SEQ scale C MAJOR: THREAT from A4 (A Bb) stays on the white keys; off: Bb4 again */
             unsigned b, out = 0, sharp = 0;
-            ork_set.arp_on = 1; ork_set.arp_mode = 0; ork_set.arp_phrase = 20; ork_set.scale = 1; ork_set.scale_root = 0;
+            unsigned q;
+            for (q = 0; q < ORK_NPHRASE && strcmp(PHRASE_NAME[q][0], "THREAT"); q++) ;
+            ork_set.arp_on = 1; ork_set.arp_mode = 0; ork_set.arp_phrase = (uint8_t)q; ork_set.scale = 1; ork_set.scale_root = 0;
             render(10);
             (void)ork_post(0, 0x90, 69, 100);
             for (b = 0; b < 1000u * 441u / 1280u; b++) { orkest_render(blk); if ((0x54Au >> (ork_stat.last_note % 12u)) & 1u) out++; }
@@ -617,10 +641,10 @@ int main(int argc, char **argv)
             ork_set.scale = 0;
             render(10);
             (void)ork_post(0, 0x90, 69, 100);
-            for (b = 0; b < 1000u * 441u / 1280u; b++) { orkest_render(blk); if (ork_stat.last_note == 75) sharp++; }
+            for (b = 0; b < 1000u * 441u / 1280u; b++) { orkest_render(blk); if (ork_stat.last_note == 70) sharp++; }
             (void)ork_post(0, 0x80, 69, 0); render(2000);
-            check("SEQ C MAJOR: FUR ELISE stays in the scale (no black key)", out == 0);
-            check("... scale off: as written (D#5 played)", sharp > 0);
+            check("SEQ C MAJOR: THREAT stays in the scale (no black key)", out == 0);
+            check("... scale off: as written (Bb4 played)", sharp > 0);
         }
         {   /* velocity in the phrases: GALLOP from a key at 100: soft sixteenths, accented eighths */
             unsigned b, lo = 255, hi = 0, q;
@@ -637,9 +661,9 @@ int main(int argc, char **argv)
             printf("  GALLOP velocities %u .. %u (key 100)\n", lo, hi);
             check("ARP velocity: GALLOP's notes soft and accented (spread > 30)", q < ORK_NPHRASE && hi - lo > 30u);
         }
-        {   /* a velocity pattern apart from the phrase: ACCENT 3 (120 70 70) over PRELUDE C (4 notes) */
+        {   /* a velocity pattern apart from the phrase: ACCENT 3 (120 70 70) over OSTINATO (8 notes) */
             static const uint8_t WANT_FREE[10] = {120, 70, 70, 120, 70, 70, 120, 70, 70, 120};
-            static const uint8_t WANT_LOOP[10] = {120, 70, 70, 120, 120, 70, 70, 120, 120, 70};
+            static const uint8_t WANT_LOOP[10] = {120, 70, 70, 120, 70, 70, 120, 70, 120, 70};
             uint8_t got[10];
             unsigned b, nn, pass, ok[2] = {1, 1};
             int lastn;
@@ -659,7 +683,7 @@ int main(int argc, char **argv)
                 for (b = 0; b < 10u; b++) if (b >= nn || got[b] != (pass ? WANT_LOOP : WANT_FREE)[b]) ok[pass] = 0;
                 (void)lastn;
             }
-            check("velocity pattern ACCENT 3 over a 4-note phrase, FREE: 120 70 70 runs on across the repeat", ok[0]);
+            check("velocity pattern ACCENT 3 over an 8-note phrase, FREE: 120 70 70 runs on across the repeat", ok[0]);
             check("... LOOP: from its start with each repeat", ok[1]);
             ork_set.velo_pat = 0; ork_set.velo_reset = 0;
         }

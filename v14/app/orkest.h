@@ -127,7 +127,7 @@ struct ork_settings {
     volatile uint32_t arp_inc;
 };
 /* a phrase's note: start (ticks, 24 a quarter note), length (ticks), interval from the key (semitones), velocity */
-typedef struct { uint16_t at; uint8_t len; int8_t iv; uint8_t vel; } ork_pev_t;   /* vel: 100 = the key's velocity */
+typedef struct { uint16_t at; uint8_t len; int8_t iv; uint8_t vel, slide; } ork_pev_t;   /* vel: 100 = the key's; slide: glide in */
 typedef struct { uint16_t first, n, len; } ork_phrase_t;
 #define ORK_NCR 8u                /* call and response: a turn of 1, 2, 3 beats, 1, 2, 3, 4, 8 bars */
 #define ORK_CR_TICKS_INIT {24, 48, 72, 96, 192, 288, 384, 768}   /* its notes in PEV, its length (ticks) */
