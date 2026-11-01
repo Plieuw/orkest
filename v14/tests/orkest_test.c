@@ -15,6 +15,7 @@
 #include "orkest.h"
 #include "fm1_device.h"
 #include "orkest_bank_file.h"
+#include "orkest_lfo.inc"
 
 /* --------------------------------------------------- simulated SDK --- */
 #define FLASH_BYTES 536576u
@@ -320,6 +321,74 @@ int main(int argc, char **argv)
     check("a bank rewrite stops the player: silence, no voice, idle", ork_stat.idle && ork_stat.voices == 0 && blk[0] == 0);
     ork_player_start();
 
+    /* ---- the LFO: measured on FLUTE (a steady, resynthesised sustain): the pitch from zero-crossing periods and the
+     * level in 20 ms windows, over 1.2 s of its held sustain */
+    {
+        static int32_t out[2 * 44100 * 2];
+        static int32_t ref[2 * 44100 * 2];
+        double pitch_sd[6], level_rng[6];
+        int run, frames = (int)(1.2 * 44100) / FM1_BLOCK_FRAMES * FM1_BLOCK_FRAMES;
+        /* runs: 0 off, 1 on with depth 0, 2 vibrato, 3 tremolo, 4 vibrato with a 3 s delay (first 0.3 s), 5 mod wheel */
+        for (run = 0; run < 6; run++) {
+            uint32_t f, b;
+            double sum = 0, sum2 = 0, n = 0, lmin = 1e9, lmax = -1e9, last = -1;
+            int32_t prev = 0;
+            ork_panic();
+            render(3000);
+            use(patch_of("FLUTE"));
+            ork_set.lfo_on = run >= 1 && run <= 4;
+            ork_set.lfo_rate = 92;
+            ork_set.lfo_vib = run == 2 || run == 4 ? 127 : 0;
+            ork_set.lfo_trem = run == 3 ? 127 : 0;
+            ork_set.lfo_delay = run == 4 ? 127 : 0;
+            ork_set.lfo_inc = LFO_INC[92];
+            ork_set.lfo_dstep = run == 4 ? 65536u / (127u * 3u * 44100u / (127u * 128u)) : 65536u;
+            note(0xB0, 1, run == 5 ? 127 : 0);
+            note(0x90, 72, 100);
+            render(run == 4 ? 30 : 700);            /* past the attack (the delay run: from the note on) */
+            for (b = 0; b < (uint32_t)frames / FM1_BLOCK_FRAMES; b++) {
+                orkest_render(blk);
+                memcpy(out + 2 * b * FM1_BLOCK_FRAMES, blk, sizeof blk);
+            }
+            if (run == 0) memcpy(ref, out, sizeof ref);
+            if (run == 1) check("LFO on with no depth: the same output as off, sample for sample", !memcmp(ref, out, sizeof ref));
+            {   /* periods between upward zero crossings of the fundamental (3 one-pole low-passes at 700 Hz) */
+                double y1 = 0, y2 = 0, y3 = 0, py = 0, a = 1 - exp(-2 * M_PI * 700 / 44100.0);
+                (void)prev;
+                for (f = 0; f < (uint32_t)(run == 4 ? frames / 4 : frames); f++) {
+                    y1 += (out[2 * f] - y1) * a; y2 += (y1 - y2) * a; y3 += (y2 - y3) * a;
+                    if (f > 2000 && py < 0 && y3 >= 0) {
+                        double t = f - 1 + -py / (y3 - py);
+                        if (last >= 0) { double hz = 44100.0 / (t - last), c = 1200 * log2(hz / 523.25); sum += c; sum2 += c * c; n++; }
+                        last = t;
+                    }
+                    py = y3;
+                }
+            }
+            for (f = 0; f + 882 <= (uint32_t)frames; f += 882) {
+                double e = 0; uint32_t j;
+                for (j = 0; j < 882; j++) e += (double)out[2 * (f + j)] * out[2 * (f + j)];
+                e = 10 * log10(e / 882 + 1);
+                if (e < lmin) lmin = e;
+                if (e > lmax) lmax = e;
+            }
+            pitch_sd[run] = n > 1 ? sqrt(sum2 / n - (sum / n) * (sum / n)) : 0;
+            level_rng[run] = lmax - lmin;
+            note(0x80, 72, 0);
+            note(0xB0, 1, 0);
+        }
+        printf("  pitch sd (cents) off %.1f, vibrato %.1f, delayed %.1f, mod wheel %.1f; level range (dB) off %.2f, tremolo %.1f\n",
+               pitch_sd[0], pitch_sd[2], pitch_sd[4], pitch_sd[5], level_rng[0], level_rng[3]);
+        check("FLUTE held, no LFO: a steady pitch (< 3 cents) and level (< 1 dB)", pitch_sd[0] < 3 && level_rng[0] < 1);
+        check("LFO vibrato: the pitch moves (> 20 cents sd)", pitch_sd[2] > 20);
+        check("LFO tremolo: the level moves (> 6 dB)", level_rng[3] > 6);
+        check("LFO delay 3 s: 0.3 s after the note on, under a quarter of the full vibrato", pitch_sd[4] < pitch_sd[2] / 4);
+        check("mod wheel, LFO off: vibrato", pitch_sd[5] > 20);
+        ork_set.lfo_on = 0;
+        ork_set.lfo_vib = 40;
+        ork_set.lfo_trem = 0;
+    }
+
     /* ---- every sound in turn, to listen to */
     if (argc > 1 && (wav = fopen(argv[1], "wb")) != 0) {
         static const uint8_t SCALE[] = {60, 62, 64, 65, 67, 69, 71, 72};
@@ -339,6 +408,21 @@ int main(int argc, char **argv)
             render(250);
             for (i = 0; i < sizeof SCALE; i++) { note(0x90, SCALE[i], 100); render(170); note(0x80, SCALE[i], 0); }
             render(900);
+        }
+        {   /* the LFO: STRINGS, then SOLO VIOLIN, with vibrato fading in */
+            static const char *const LP[2] = {"STRINGS", "SOLO VIOLIN"};
+            int q;
+            ork_set.lfo_on = 1; ork_set.lfo_rate = 92; ork_set.lfo_vib = 45; ork_set.lfo_trem = 0; ork_set.lfo_delay = 17;
+            ork_set.lfo_inc = LFO_INC[92];
+            ork_set.lfo_dstep = 65536u / (17u * 3u * 44100u / (127u * 128u));
+            for (q = 0; q < 2; q++) {
+                use(patch_of(LP[q]));
+                note(0x90, 60, 90); note(0x90, 64, 90); note(0x90, 67, 90);
+                render(2500);
+                note(0x80, 60, 0); note(0x80, 64, 0); note(0x80, 67, 0);
+                render(1200);
+            }
+            ork_set.lfo_on = 0;
         }
         v = 36 + wav_frames * 4u;
         fseek(wav, 4, SEEK_SET); fwrite(&v, 4, 1, wav);

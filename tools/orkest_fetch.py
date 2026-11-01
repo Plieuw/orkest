@@ -31,7 +31,8 @@ REPO = "sgossner/VSCO-2-CE"
 RAW = f"https://raw.githubusercontent.com/{REPO}/master/"
 TREE = f"https://api.github.com/repos/{REPO}/git/trees/master?recursive=1"
 
-# name: (rate, keep s, [(folder, file regex), ...])   one file per regex, first match in sorted order
+# name: (rate, keep s, [(folder, file regex), ...]). Sustains without vibrato where VSCO has them (NV, sus): a steady
+# sound; the strings exist only with vibrato (gen_orkest.py freezes their sustain). Movement: the firmware's LFO   one file per regex, first match in sorted order
 S, W, B, P = "Strings/", "Woodwinds/", "Brass/", "Percussion/"
 INSTRUMENTS = {
     # strings: sections and solo
@@ -41,7 +42,7 @@ INSTRUMENTS = {
                                 (S + "Viola Section/susvib", r"_E4_v2_1")]),
     "CELLI":      (22050, 1.5, [(S + "Cello Section/susvib", r"^susvib_C1_v3_1"), (S + "Cello Section/susvib", r"^susvib_D2_v3_1"),
                                 (S + "Cello Section/susvib", r"^susvib_C3_v3_1")]),
-    "BASSES":     (16000, 1.5, [(S + "Solo Contrabass/SusVib", r"_A#0_v3_rr1"), (S + "Solo Contrabass/SusVib", r"_A1_v3_rr1")]),
+    "BASSES":     (16000, 1.5, [(S + "Solo Contrabass/SusNV", r"_A#0_v3_rr1"), (S + "Solo Contrabass/SusNV", r"_A1_v3_rr1")]),
     "SOLO VIOLIN": (22050, 1.5, [(S + "Solo Violin/Arco Vib", r"_G3_f"), (S + "Solo Violin/Arco Vib", r"_E4_f"),
                                  (S + "Solo Violin/Arco Vib", r"_C5_f"), (S + "Solo Violin/Arco Vib", r"_A5_f")]),
     "TREMOLO":    (22050, 1.5, [(S + "Violin Section/Trem", r"_A2_v2\."), (S + "Violin Section/Trem", r"_C4_v2\."),
@@ -54,18 +55,18 @@ INSTRUMENTS = {
     "HARP":       (22050, 1.0, [(S + "Harp", r"_D2_mf"), (S + "Harp", r"_C3_mf"), (S + "Harp", r"_D4_mf"),
                                 (S + "Harp", r"_C5_mf")]),
     # woodwinds
-    "FLUTE":      (22050, 1.5, [(W + "Flute/susvib", r"_C3_v1_1"), (W + "Flute/susvib", r"_A3_v1_1"),
-                                (W + "Flute/susvib", r"_A4_v1_1")]),
-    "OBOE":       (22050, 1.5, [(W + "Oboe/Vib", r"_D3_v3_"), (W + "Oboe/Vib", r"_A#3_v3_"), (W + "Oboe/Vib", r"_F4_v3_")]),
+    "FLUTE":      (22050, 1.5, [(W + "Flute/susNV", r"_C3_v3_1"), (W + "Flute/susNV", r"_A3_v3_1"),
+                                (W + "Flute/susNV", r"_A4_v3_1")]),
+    "OBOE":       (22050, 1.5, [(W + "Oboe/Sus", r"_D3_v3_"), (W + "Oboe/Sus", r"_A#3_v3_"), (W + "Oboe/Sus", r"_F4_v3_")]),
     "CLARINET":   (22050, 1.5, [(W + "Clarinet/susLong", r"_D2_v2_rr1"), (W + "Clarinet/susLong", r"_D3_v2_rr1"),
                                 (W + "Clarinet/susLong", r"_D4_v2_rr1")]),
-    "BASSOON":    (16000, 1.5, [(W + "Bassoon/vib", r"_A1_v2_1"), (W + "Bassoon/vib", r"_G2_v2_1"),
-                                (W + "Bassoon/vib", r"_E3_v2_1")]),
+    "BASSOON":    (16000, 1.5, [(W + "Bassoon/sus", r"_A1_v2_1"), (W + "Bassoon/sus", r"_G2_v2_1"),
+                                (W + "Bassoon/sus", r"_D#3_v2_1")]),
     # brass
     "HORN":       (22050, 1.5, [(B + "F Horn/sus", r"_G1_v2_1"), (B + "F Horn/sus", r"_F2_v2_1"),
                                 (B + "F Horn/sus", r"_C3_v2_1")]),
-    "TRUMPET":    (22050, 1.5, [(B + "Trumpet/susvib", r"_F2_v2_rr1"), (B + "Trumpet/susvib", r"_F3_v2_rr1"),
-                                (B + "Trumpet/susvib", r"_F4_v2_rr1")]),
+    "TRUMPET":    (22050, 1.5, [(B + "Trumpet/sus", r"_F2_v3_rr1"), (B + "Trumpet/sus", r"_D#3_v3_rr1"),
+                                (B + "Trumpet/sus", r"_D4_v3_rr1")]),
     "TROMBONE":   (22050, 1.5, [(B + "Tenor Trombone/sus", r"_F1_v2_1"), (B + "Tenor Trombone/sus", r"_D2_v2_1"),
                                 (B + "Tenor Trombone/sus", r"_C3_v2_1")]),
     "TUBA":       (16000, 1.5, [(B + "Tuba/sus", r"_F0_v1_rr1"), (B + "Tuba/sus", r"_F1_v2_rr1"),

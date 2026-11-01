@@ -32,25 +32,33 @@ MAXL = 3                        # layers per patch (firmware/src/synth.c)
 NOTE = {"C": 0, "C#": 1, "D": 2, "D#": 3, "E": 4, "F": 5, "F#": 6, "G": 7, "G#": 8, "A": 9, "A#": 10, "B": 11}
 
 # instrument: (folder, kind, attack s, loop s, gain dB)
-#   kind "sus": attack + loop;  "one": one-shot, `attack` = its length (faded at the end), loop unused
+#   kind: how the sustain is made after the recording's attack (the transient, always the recording itself):
+#     "harm"  resynthesised, steady: the recording's harmonics (their average strength over the held note, their
+#             phase where the loop starts) on a loop of a whole number of periods, plus its noise (breath, bow)
+#             at its average level: one pitch, one timbre, no vibrato or swell (winds, brass, basses, solo violin)
+#     "ens"   as "harm", but the upper harmonics keep part of their energy as their own spread band, fixed random
+#             phases (string sections: the ensemble's sheen on top, the fundamental and low harmonics steady)
+#     "sus"   the recording's own sustain, crossfaded loop (tremolo: its movement is the articulation)
+#     "one"   one-shot, `attack` = its length (faded at the end), loop unused
+#   Movement (vibrato, tremolo) comes from the firmware's LFO, on request.
 INSTR = {
-    "VIOLINS":      ("VIOLINS", "sus", 0.30, 0.40, 0),
-    "VIOLAS":       ("VIOLAS", "sus", 0.30, 0.40, 0),
-    "CELLI":        ("CELLI", "sus", 0.30, 0.40, 0),
-    "BASSES":       ("BASSES", "sus", 0.30, 0.45, 0),
-    "SOLO VIOLIN":  ("SOLO_VIOLIN", "sus", 0.30, 0.40, -1),
+    "VIOLINS":      ("VIOLINS", "ens", 0.30, 0.40, 0),
+    "VIOLAS":       ("VIOLAS", "ens", 0.30, 0.40, 0),
+    "CELLI":        ("CELLI", "ens", 0.30, 0.40, 0),
+    "BASSES":       ("BASSES", "harm", 0.30, 0.40, 0),
+    "SOLO VIOLIN":  ("SOLO_VIOLIN", "harm", 0.30, 0.40, -1),
     "TREMOLO":      ("TREMOLO", "sus", 0.25, 0.35, -1),
     "PIZZICATO":    ("PIZZICATO", "one", 0.42, 0, -1),
     "SPICCATO":     ("SPICCATO", "one", 0.38, 0, -1),
     "HARP":         ("HARP", "one", 0.62, 0, -2),
-    "FLUTE":        ("FLUTE", "sus", 0.30, 0.40, -1),
-    "OBOE":         ("OBOE", "sus", 0.25, 0.40, -2),
-    "CLARINET":     ("CLARINET", "sus", 0.30, 0.40, -1),
-    "BASSOON":      ("BASSOON", "sus", 0.30, 0.40, -1),
-    "HORN":         ("HORN", "sus", 0.30, 0.40, -1),
-    "TRUMPET":      ("TRUMPET", "sus", 0.25, 0.40, -3),
-    "TROMBONE":     ("TROMBONE", "sus", 0.25, 0.40, -2),
-    "TUBA":         ("TUBA", "sus", 0.30, 0.45, -1),
+    "FLUTE":        ("FLUTE", "harm", 0.30, 0.40, -1),
+    "OBOE":         ("OBOE", "harm", 0.25, 0.40, -2),
+    "CLARINET":     ("CLARINET", "harm", 0.30, 0.40, -1),
+    "BASSOON":      ("BASSOON", "harm", 0.30, 0.40, -1),
+    "HORN":         ("HORN", "harm", 0.30, 0.40, -1),
+    "TRUMPET":      ("TRUMPET", "harm", 0.25, 0.40, -3),
+    "TROMBONE":     ("TROMBONE", "harm", 0.25, 0.40, -2),
+    "TUBA":         ("TUBA", "harm", 0.30, 0.40, -1),
     "TIMPANI":      ("TIMPANI", "one", 0.80, 0, 0),
     "GLOCKENSPIEL": ("GLOCKENSPIEL", "one", 0.45, 0, -4),
 }
@@ -208,6 +216,86 @@ def crossfade(x, ls, le, xf, corr):
     return y
 
 
+# ------------------------------------------------------------------ steady sustains --
+RNG_SEED = 1729                 # fixed: the same bank from the same recordings
+
+
+def steady_part(x, sr, start):
+    """the held note after the attack: from `start` to the end, less the last 30 ms"""
+    return x[start:len(x) - int(0.03 * sr)]
+
+
+def loop_length(f0, sr, length):
+    """a loop of a whole number of periods, about `length` s: (samples, f0 it makes exactly)"""
+    best = None
+    for k in range(max(1, int(length * f0 * 0.8)), int(length * f0 * 1.25) + 2):
+        n = round(k * sr / f0)
+        err = abs(1200 * math.log2((k * sr / n) / f0))
+        if best is None or err < best[0]:
+            best = (err, n, k * sr / n)
+    return best[1], best[2]
+
+
+def harm_loop(x, sr, ls, f0, length, seed, spread=None):
+    """a steady loop: the harmonics' average amplitude over the held note, their phase at ls, on a loop of a whole
+    number of periods (exact pitch, no vibrato or swell); the noise between them at its average level, fixed random
+    phases. spread(k): the share of harmonic k's energy kept as its own spread band (random phases: an ensemble's
+    width, which beats only where the band is wide: the upper harmonics). Returns (loop samples, f0 used)"""
+    seg = steady_part(x, sr, ls)
+    n, f = loop_length(f0, sr, length)
+    w = np.hanning(len(seg))
+    spec = np.abs(np.fft.rfft(seg * w)) ** 2
+    hz = np.fft.rfftfreq(len(seg), 1 / sr)
+    nyq = 0.47 * sr
+    t = np.arange(n) / sr
+    y = np.zeros(n)
+    # the phase at ls: a short frame (4 periods) from ls
+    m = max(int(4 * sr / f0), 64)
+    fr = x[ls:ls + m] * np.hanning(m)
+    tt = np.arange(m) / sr
+    harm_band = np.zeros(len(hz), bool)
+    noise_w = np.ones(len(hz))                  # the share of each bin that goes to the noise / spread part
+    spread_e = 0.0
+    k = 1
+    while k * f0 < nyq:
+        band = (hz > (k - 0.45) * f0) & (hz < (k + 0.45) * f0)
+        core = (hz > (k - 0.2) * f0) & (hz < (k + 0.2) * f0)
+        harm_band |= core
+        sk = spread(k) if spread else 0.0
+        noise_w[core] = sk
+        e = spec[band].sum()
+        spread_e += sk * spec[core].sum()
+        if e > 0:
+            amp = math.sqrt(e * (1 - sk))
+            ph = np.angle(np.sum(fr * np.exp(-2j * np.pi * k * f0 * (tt - (m / 2) / sr))))
+            # the frame's centre is m/2 after ls: its phase back to ls
+            ph -= 2 * np.pi * k * f0 * (m / 2) / sr
+            y += amp * np.cos(2 * np.pi * k * f * t + ph)
+        k += 1
+    # the noise: the spectrum outside the harmonics' cores, average level, random phases
+    rng = np.random.default_rng(seed)
+    nb = n // 2 + 1
+    noise_spec = np.interp(np.fft.rfftfreq(n, 1 / sr), hz, spec * noise_w)
+    noise_spec[np.fft.rfftfreq(n, 1 / sr) > nyq] = 0
+    noise = np.fft.irfft(np.sqrt(noise_spec) * np.exp(2j * np.pi * rng.random(nb)), n)
+    # the two at the recording's balance: harmonic and noise energy as measured
+    eh, en = spec[harm_band].sum() - spread_e, spec[~harm_band & (hz < nyq)].sum() + spread_e
+    y = y / (np.sqrt(np.mean(y ** 2)) + 1e-12) * math.sqrt(max(eh, 0.0))
+    noise = noise / (np.sqrt(np.mean(noise ** 2)) + 1e-12) * math.sqrt(en)
+    y = y + noise
+    return y / (np.sqrt(np.mean(y ** 2)) + 1e-12) * math.sqrt(np.mean(seg ** 2)), f
+
+
+def splice(x, ls, loop, xf):
+    """the recording up to ls, then the loop; over the xf samples before ls the recording fades into the loop's own
+    end (the loop repeats, so its end leads into its start at ls): equal power"""
+    n = len(loop)
+    y = np.concatenate([x[:ls].astype(np.float64), loop])
+    a = (np.arange(xf) + 0.5) / xf
+    y[ls - xf:ls] = x[ls - xf:ls] * np.cos(a * math.pi / 2) + loop[n - xf:] * np.sin(a * math.pi / 2)
+    return y
+
+
 # ------------------------------------------------------------------ IMA ADPCM --
 def ima_encode(s, mark):
     """int samples -> (bytes, (pred, idx) before sample `mark`): two samples a byte, the even one low; the encoder
@@ -271,7 +359,23 @@ def zone(inst, kind, p, root, attack, loop):
     sr, x = read_wav(p)
     x = x[max(0, onset(x) - int(0.002 * sr)):]
     x = x - np.mean(x[:int(0.5 * sr)])                          # no DC (it would click at the loop)
-    if kind == "sus":
+    if kind in ("harm", "ens"):
+        ls = int(attack * sr)
+        seed = RNG_SEED + int(root * 16) + len(inst) * 7
+        if True:                                # both: a steady pitch from the held note
+            seg = steady_part(x, sr, ls)
+            f0 = 440.0 * 2 ** ((yin_midi(seg[:int(0.4 * sr)], sr) - 69) / 12)
+            if abs(1200 * math.log2(f0 / (440.0 * 2 ** ((root - 69) / 12)))) > 60:   # an octave error: the name's note
+                f0 = 440.0 * 2 ** ((root - 69) / 12)
+            # ens: the fundamental and the low harmonics pure (steady), the upper ones partly their own spread band
+            spread = (lambda k: min(0.6, 0.08 * (k - 1))) if kind == "ens" else None
+            loop, _ = harm_loop(x, sr, ls, f0, loop, seed, spread)
+        xf = min(int(0.08 * sr), ls // 2, len(loop) // 2)
+        x = splice(x, ls, loop, xf)
+        le = len(x)
+        rms = math.sqrt(np.mean(x[ls:le] ** 2))
+        looped = True
+    elif kind == "sus":
         xf = int(0.10 * sr)
         ls, le, corr = find_loop(x, sr, int(attack * sr), loop, xf)
         x = crossfade(level_loop(x, ls, le, sr), ls, le, xf, corr)[:le]

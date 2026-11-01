@@ -15,10 +15,20 @@ sequencer worden niet gebruikt.
 | 27 toetsen | spelen de klank, sturen MIDI uit (kanaal 1, USB/Bluetooth) |
 | KNOB 1 of PRESETS | klank kiezen (24); zet attack en release op die van de klank |
 | KNOB 2 / 3 / 4 | attack / release / ROOM (galm) |
+| LFO (kort) | modulatie aan/uit (lampje brandt als hij aan staat) |
+| LFO vasthouden + knoppen | K1 snelheid (0,3–16 Hz), K2 vibrato (tot ±60 cent), K3 tremolo, K4 inloopvertraging (0–3 s) |
+| MIDI CC 1 (modwiel) | vibrato, ook met de LFO uit |
 | OCT- / OCT+ | octaaf −3..+3 |
 | SAVE | klank, attack, release, room en octaaf bewaren (terug na herstart) |
 | MASTER | volume |
 | MIDI in (DIN/TRS, USB, Bluetooth) | noten op elk kanaal, CC 120/123 = alles uit |
+
+## Klank
+
+De aanslag van elke noot is de echte opname. De aanhoudende toon daarna is stabiel: geen vibrato, geen zwelling.
+Blazers, contrabas en soloviool krijgen een loop die opnieuw is opgebouwd uit de boventonen van de opname (hun
+gemiddelde sterkte, een exact geheel aantal periodes); de strijkerssecties ook, met wat ensemble-glans op de hoge
+boventonen. Blazers en contrabas komen uit VSCO's opnames zonder vibrato. Beweging voeg je zelf toe met de LFO.
 
 ## Hoe het in elkaar zit
 

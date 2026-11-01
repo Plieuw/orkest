@@ -5,7 +5,10 @@
  *   KNOB 2            attack               SAVE         sound, attack, release, room, octave into flash
  *   KNOB 3            release              MASTER       volume
  *   KNOB 4            room (reverb)
+ *   LFO               press: modulation on / off (its LED lit when on)
+ *   LFO held + knobs  K1 rate, K2 vibrato, K3 tremolo, K4 delay (the screen shows them while LFO is held)
  *   Choosing a sound sets attack and release to its own; turn KNOB 2 / 3 after to change them.
+ *   MIDI CC 1 (mod wheel): vibrato, also with the LFO off.
  *   The keys play the sound and go out as MIDI (channel 1, USB / Bluetooth).
  *
  * The 5x7 font and its glyph tables are M-VAVE's (FM1 Open app/screen.c, GPL-3.0 with the SDK linking exception). */
@@ -13,6 +16,7 @@
 #include "fm1_device.h"
 #include "version.h"
 #include <string.h>
+#include "orkest_lfo.inc"
 
 enum { BACK = 0x0000, TEXT = 0xef5d, ACCENT = 0x07ff, DIM = 0x738e, AMBER = 0xfd20 };
 enum { B_OCTDN, B_OCTUP, B_FX, B_SCL, B_ENV, B_LFO, B_EDIT, B_GLO, B_HOME, B_SAVE, B_ARP, B_SEQ, B_PLAY, B_REC };
@@ -149,8 +153,20 @@ static void knob_row(unsigned l, const char *label, const char *value, uint16_t 
 }
 
 /* --------------------------------------------------------- settings --- */
-#define SET_MAGIC 0x3153524FU    /* "ORS1" */
-struct settings { uint32_t magic; uint8_t patch, attack, release, reverb; int8_t octave; uint8_t pad[3]; uint32_t check; };
+#define SET_MAGIC 0x3253524FU    /* "ORS2" (ORS1: before the LFO; read as the defaults) */
+struct settings {
+    uint32_t magic;
+    uint8_t patch, attack, release, reverb;
+    int8_t octave;
+    uint8_t lfo_on, lfo_rate, lfo_vib, lfo_trem, lfo_delay, pad[2];
+    uint32_t check;
+};
+static void lfo_apply(void)        /* the player's per-block steps for rate and delay */
+{
+    uint32_t blocks = (uint32_t)ork_set.lfo_delay * 3u * 44100u / (127u * 128u);
+    ork_set.lfo_inc = LFO_INC[ork_set.lfo_rate & 127u];
+    ork_set.lfo_dstep = blocks ? 65536u / blocks : 65536u;
+}
 static int8_t octave;
 static uint32_t set_check(const struct settings *s)
 {
@@ -176,6 +192,11 @@ static void settings_load(void)
     ork_set.release = s.release & 127u;
     ork_set.reverb = s.reverb & 127u;
     octave = s.octave < -3 ? -3 : s.octave > 3 ? 3 : s.octave;
+    ork_set.lfo_on = s.lfo_on & 1u;
+    ork_set.lfo_rate = s.lfo_rate & 127u;
+    ork_set.lfo_vib = s.lfo_vib & 127u;
+    ork_set.lfo_trem = s.lfo_trem & 127u;
+    ork_set.lfo_delay = s.lfo_delay & 127u;
 }
 static int settings_save(void)
 {
@@ -187,6 +208,11 @@ static int settings_save(void)
     s.release = ork_set.release;
     s.reverb = ork_set.reverb;
     s.octave = octave;
+    s.lfo_on = ork_set.lfo_on;
+    s.lfo_rate = ork_set.lfo_rate;
+    s.lfo_vib = ork_set.lfo_vib;
+    s.lfo_trem = ork_set.lfo_trem;
+    s.lfo_delay = ork_set.lfo_delay;
     s.check = set_check(&s);
     if (!fm1_flash_size() || fm1_flash_erase(set_offset()) != FM1_FLASH_OK)
         return -1;
@@ -195,6 +221,7 @@ static int settings_save(void)
 
 /* ------------------------------------------------------------ state --- */
 static uint32_t prev_keys, blocked_keys, prev_buttons, led_shown, event_until, splash_until, frame_ms;
+static uint8_t lfo_held, lfo_used;   /* LFO is down; a knob was turned while it was (then its release is no toggle) */
 static uint8_t key_note[KEYS];
 static char event[40];
 static unsigned master_adc = 0xFFFF;
@@ -227,8 +254,10 @@ static void key_event(uint8_t status, uint8_t note, uint8_t vel)
 
 static void leds(void)
 {
-    uint32_t want = 0, diff, i;                     /* bit k: note key k; bits 27, 28: OCT- / OCT+ */
+    uint32_t want = 0, diff, i;                     /* bit k: note key k; bits 27, 28: OCT- / OCT+; 29: LFO */
     want = prev_keys & ((1u << KEYS) - 1u);
+    if (ork_set.lfo_on)
+        want |= 1u << 29;
     if (octave < 0)
         want |= 1u << 27;
     if (octave > 0)
@@ -241,6 +270,8 @@ static void leds(void)
         fm1_led_set(B_OCTDN, octave < 0);
     if (diff & (1u << 28))
         fm1_led_set(B_OCTUP, octave > 0);
+    if (diff & (1u << 29))
+        fm1_led_set(B_LFO, ork_set.lfo_on);
     led_shown = want;
 }
 
@@ -267,6 +298,24 @@ static void draw(uint32_t now)
         knob_row(L_K2, "KEEP THE USB", "", DIM);
         knob_row(L_K3, "CABLE CONNECTED", "", DIM);
         knob_row(L_K4, "", "", TEXT);
+    } else if (lfo_held) {                          /* LFO held: its settings on the knobs */
+        unsigned d = (unsigned)ork_set.lfo_delay * 30u / 127u, r = LFO_DHZ[ork_set.lfo_rate & 127u];
+        line(L_SOUND, ork_set.lfo_on ? "LFO ON" : "LFO OFF", ork_set.lfo_on ? ACCENT : DIM);
+        line(L_NOTE, "LFO + KNOBS", DIM);
+        p = put_int(v, (int)(r / 10u));
+        p = put_str(p, ".");
+        p = put_int(p, (int)(r % 10u));
+        put_str(p, " HZ");
+        knob_row(L_K1, "K1 RATE", v, TEXT);
+        put_int(v, ork_set.lfo_vib);
+        knob_row(L_K2, "K2 VIBRATO", v, TEXT);
+        put_int(v, ork_set.lfo_trem);
+        knob_row(L_K3, "K3 TREMOLO", v, TEXT);
+        p = put_int(v, (int)(d / 10u));
+        p = put_str(p, ".");
+        p = put_int(p, (int)(d % 10u));
+        put_str(p, " S");
+        knob_row(L_K4, "K4 DELAY", v, TEXT);
     } else if (st != ORK_BANK_OK) {
         line(L_SOUND, st == ORK_BANK_NONE ? "NO SOUNDS" : "BANK DAMAGED", AMBER);
         line(L_NOTE, "", TEXT);
@@ -285,7 +334,9 @@ static void draw(uint32_t now)
         p = put_str(p, "   OCT ");
         if (octave > 0)
             p = put_str(p, "+");
-        put_int(p, octave);
+        p = put_int(p, octave);
+        if (ork_set.lfo_on)
+            put_str(p, "   LFO");
         line(L_NOTE, b, TEXT);
         p = put_int(v, ork_set.patch + 1);
         p = put_str(p, "/");
@@ -318,6 +369,7 @@ void groove_screen_init(void)
     fm1_screen_init();
     fm1_screen_fill(0, 0, 240, 240, BACK);
     settings_load();
+    lfo_apply();
     ork_bank_boot();
     if (ork_bank_state() == ORK_BANK_OK && ork_set.patch >= ork_bank.np)
         patch_select(0);
@@ -371,14 +423,40 @@ void groove_screen_control(void)
             octave = octave < -3 ? -3 : octave > 3 ? 3 : octave;
         } else if (k == B_SAVE)
             say(settings_save() == 0 ? "SAVED" : "SAVE FAILED", now);
+        else if (k == B_LFO) {
+            lfo_held = 1;
+            lfo_used = 0;
+            force_draw = 1;
+        }
         else {
             char b[24];
             put_str(put_str(b, "BUTTON "), BUTTON_NAME[k]);
             say(b, now);
         }
     }
-    /* the knobs */
-    if (ork_bank_state() == ORK_BANK_OK) {
+    /* LFO let go: a press without a knob turned switches the modulation on / off */
+    if (lfo_held && !(c.buttons & (1u << B_LFO))) {
+        lfo_held = 0;
+        if (!lfo_used) {
+            ork_set.lfo_on ^= 1u;
+            say(ork_set.lfo_on ? "LFO ON" : "LFO OFF", now);
+        }
+        force_draw = 1;
+    }
+    /* the knobs: with LFO held, the LFO's settings */
+    if (lfo_held) {
+        int e[4] = {c.encoders[E_K1], c.encoders[E_K2], c.encoders[E_K3], c.encoders[E_K4]};
+        volatile uint8_t *t[4] = {&ork_set.lfo_rate, &ork_set.lfo_vib, &ork_set.lfo_trem, &ork_set.lfo_delay};
+        for (k = 0; k < 4u; k++)
+            if (e[k]) {
+                int v = *t[k] + e[k];
+                *t[k] = (uint8_t)(v < 0 ? 0 : v > 127 ? 127 : v);
+                lfo_used = 1;
+            }
+        if (lfo_used && !ork_set.lfo_on)            /* adjusting it means wanting it */
+            ork_set.lfo_on = 1;
+        lfo_apply();
+    } else if (ork_bank_state() == ORK_BANK_OK) {
         if ((d = c.encoders[E_K1] + c.encoders[E_PRESETS]) != 0)
             patch_select(ork_set.patch + d);
         if ((d = c.encoders[E_K2]) != 0)

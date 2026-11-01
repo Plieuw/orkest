@@ -33,6 +33,13 @@ int main(void){
   for(int i=0;i<40;i++) groove_screen_control();
   ork_stat.last_note=67; ork_stat.voices=6; ctl.encoders[2]=0; groove_screen_control(); for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-main.rgb565");
   ctl.encoders[2]=10; groove_screen_control(); for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-harp.rgb565");
+  ctl.buttons = 1u << 5; groove_screen_control();              /* LFO held, K2 turned: its page, LFO on */
+  ctl.encoders[3] = 5; groove_screen_control(); ctl.encoders[3] = 0;
+  for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-lfo.rgb565");
+  ctl.buttons = 0; groove_screen_control(); for(int i=0;i<3;i++)groove_screen_control();
+  if (!ork_set.lfo_on || ork_set.lfo_vib != 45) { printf("screen test FAIL: LFO held + K2: on, vibrato 45\n"); return 1; }
+  ctl.buttons = 1u << 5; groove_screen_control(); ctl.buttons = 0; groove_screen_control();
+  if (ork_set.lfo_on) { printf("screen test FAIL: an LFO press switches it off\n"); return 1; }
   if (ork_bank.np != 24 || ork_set.patch != 10 || strcmp(ork_bank.patch[10].name, "HARP")) { printf("screen test FAIL: the bank changed under the screen\n"); return 1; }
   printf("screen test passed (build/host/screen-*.rgb565)\n");
   return 0;}

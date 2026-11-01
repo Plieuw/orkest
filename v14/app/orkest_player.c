@@ -34,12 +34,14 @@ typedef struct {
     int32_t pred, s0, s1;        /* the decoder's predictor; the two samples interpolated between */
     uint32_t env, estep, age;    /* 0..ENV_MAX; per frame; started at */
     uint16_t gl, gr;             /* level per side, Q15 */
+    uint16_t lfo_amt;            /* the LFO's share, 0..65535: fades in after note on (delay) */
+    uint16_t trem;               /* the tremolo gain at the end of the last block, Q15 */
     uint8_t idx, note, stage, one, ended;
 } voice_t;
 static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
-struct ork_settings ork_set = {0, 8, 50, 40, 100};
+struct ork_settings ork_set = {0, 8, 50, 40, 100, 0, 92, 40, 0, 17, 0, 0};
 struct ork_status ork_stat = {0, 0xFF, 0, 1};
 
 /* ------------------------------------------------------------ events --- */
@@ -184,6 +186,8 @@ static FM1_AUDIO_CODE void note_on(uint32_t note, uint32_t vel)
         v->ended = 0;
         v->s1 = adpcm_next(v);                  /* the interpolator starts between 0 and the first sample */
         v->env = 0;
+        v->lfo_amt = 0;
+        v->trem = 32767;
         v->estep = env_step(in->one ? 0u : ork_set.attack);
         v->stage = ST_ATTACK;
         v->one = in->one;
@@ -220,6 +224,7 @@ static FM1_AUDIO_CODE void all_off(void)
 
 /* note events, held counts: a note held by several sources (a key and MIDI) ends when the last lets go */
 static uint8_t held[128];
+static uint8_t modwheel;                         /* MIDI CC 1: vibrato, also with the LFO off */
 static FM1_AUDIO_CODE void events(void)
 {
     uint32_t l;
@@ -246,6 +251,8 @@ static FM1_AUDIO_CODE void events(void)
             } else if (st == 0x80u || st == 0x90u) {
                 if (held[d1] && --held[d1] == 0u)
                     note_off(d1);
+            } else if (st == 0xB0u && d1 == 1u) {
+                modwheel = (uint8_t)d2;
             } else if (st == 0xB0u && (d1 == 123u || d1 == 120u)) {
                 for (d1 = 0; d1 < 128u; d1++)
                     held[d1] = 0;
@@ -298,6 +305,16 @@ static inline __attribute__((always_inline)) int32_t soft_clip(int32_t x)
     return x - (int32_t)(c * 4 / 27);
 }
 
+/* -------------------------------------------------------------- LFO --- */
+static uint32_t lfo_phase;
+static int32_t lfo_s, lfo_vib_q8, lfo_trem_q15;
+/* sin(2 pi phase / 2^32), Q15, a parabola (within 6 %: an LFO's shape, not a tone) */
+static inline __attribute__((always_inline)) int32_t lfo_sine(uint32_t phase)
+{
+    int32_t q = (int32_t)phase >> 16, a = q < 0 ? -q : q;
+    return clampi((4 * q * (32768 - a)) >> 15, -32767, 32767);
+}
+
 /* ----------------------------------------------------------- render --- */
 FM1_AUDIO_CODE unsigned orkest_output_level(void) { return ork_set.master; }
 
@@ -321,11 +338,37 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
         return 0;
     }
     events();
+    {   /* the LFO for this block: vibrato depth (cents, Q8) from the panel (when on) or the mod wheel, tremolo */
+        int32_t vib = ork_set.lfo_on ? ork_set.lfo_vib : 0, trem = ork_set.lfo_on ? ork_set.lfo_trem : 0;
+        if (modwheel > vib)
+            vib = modwheel;
+        lfo_vib_q8 = vib * 60 * 256 / 127;
+        lfo_trem_q15 = trem * 29491 / 127;
+        lfo_phase += ork_set.lfo_inc;
+        lfo_s = lfo_sine(lfo_phase);
+    }
     for (k = 0; k < NVOICE; k++) {
         voice_t *v = &voice[k];
+        uint32_t step = v->step;
+        int32_t g0 = 32767, g1 = 32767, tremolo = 0;
         if (v->stage == ST_OFF)
             continue;
         busy++;
+        if (lfo_vib_q8 || lfo_trem_q15) {           /* this voice's share of the LFO, faded in after its note on */
+            uint32_t amt = v->lfo_amt + ork_set.lfo_dstep;
+            v->lfo_amt = (uint16_t)(amt > 65535u ? 65535u : amt);
+            if (lfo_vib_q8) {                       /* pitch: 1 + cents ln2 / 1200, the first order (<= 1 cent off) */
+                int32_t c8 = (int32_t)(((int64_t)lfo_vib_q8 * lfo_s >> 15) * v->lfo_amt >> 16);
+                int32_t d16 = (int32_t)(((int64_t)c8 * 9691) >> 16);
+                step = (uint32_t)((int64_t)step + (((int64_t)step * d16) >> 16));
+            }
+            if (lfo_trem_q15) {                     /* level: down by depth x (1 - sine) / 2, glided over the block */
+                g0 = v->trem;
+                g1 = 32767 - (int32_t)((((int64_t)lfo_trem_q15 * ((32767 - lfo_s) >> 1)) >> 15) * v->lfo_amt >> 16);
+                v->trem = (uint16_t)g1;
+                tremolo = 1;
+            }
+        }
         for (i = 0; i < FM1_BLOCK_FRAMES; i++) {
             int32_t s;
             if (v->stage == ST_ATTACK) {
@@ -341,7 +384,7 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
                 } else
                     v->env -= v->estep;
             }
-            v->frac += v->step;
+            v->frac += step;
             while (v->frac >= 65536u) {
                 v->frac -= 65536u;
                 v->s0 = v->s1;
@@ -349,6 +392,8 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
             }
             s = v->s0 + (((v->s1 - v->s0) * (int32_t)(v->frac >> 1)) >> 15);
             s = (s * (int32_t)(v->env >> 15)) >> 15;
+            if (tremolo)
+                s = (s * (g0 + (((g1 - g0) * (int32_t)i) >> 7))) >> 15;
             out[2u * i] += (s * v->gl) >> 16;       /* each voice at -6 dB: big chords reach the soft clip */
             out[2u * i + 1u] += (s * v->gr) >> 16;
             if (v->stage == ST_OFF)

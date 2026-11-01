@@ -79,6 +79,11 @@ uint32_t ork_bank_progress(void); /* bytes received of the upload in progress (0
 struct ork_settings {
     volatile uint8_t patch, attack, release, reverb;   /* patch index; 0..127 */
     volatile uint8_t master;                            /* 0..127 */
+    /* the LFO (one for all voices, each voice fades it in after its note on): on, rate, vibrato (0..127 = 0..60
+     * cents), tremolo (0..127 = 0..90 % level), delay (0..127 = 0..3 s); lfo_inc / lfo_dstep: the control task's
+     * phase step per block and fade-in step per block (Q16) for rate and delay */
+    volatile uint8_t lfo_on, lfo_rate, lfo_vib, lfo_trem, lfo_delay;
+    volatile uint32_t lfo_inc, lfo_dstep;
 };
 extern struct ork_settings ork_set;
 /* What the player reports (written by the audio ISR). */
