@@ -112,6 +112,11 @@ struct ork_settings {
      * velo_depth 0..100 % of the pattern; velo_human 0..100 (a random +-0..30); velo_reset 0 FREE (runs on over the
      * phrase's repeats), 1 LOOP (from its start with each repeat) */
     volatile uint8_t velo_pat, velo_depth, velo_human, velo_reset;
+    /* SEQ PARTS: with parts_on, ARP plays up to four parts from each key, each its own sound (part_patch: 0 off,
+     * else the patch + 1), phrase, velocity pattern and octave (-2..+2) */
+    volatile uint8_t parts_on;
+    volatile uint8_t part_patch[4], part_phrase[4], part_velo[4];
+    volatile int8_t part_oct[4];
     volatile uint32_t arp_inc;
 };
 /* a phrase's note: start (ticks, 24 a quarter note), length (ticks), interval from the key (semitones), velocity */

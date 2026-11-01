@@ -642,6 +642,25 @@ int main(int argc, char **argv)
             ork_set.arp_gate = 90;
             use(patch_of("HARP"));
         }
+        {   /* SEQ PARTS (as the player starts): CELLI ALBERTI an octave down, VIOLINS ARP UP DOWN, FLUTE TRILL up */
+            unsigned b, most = 0;
+            check("PARTS defaults: ALBERTI, ARP UP DOWN, TRILL; CELLI, VIOLINS, FLUTE",
+                  !strcmp(PHRASE_NAME[ork_set.part_phrase[0]][0], "ALBERTI") &&
+                  !strcmp(PHRASE_NAME[ork_set.part_phrase[1]][0], "ARP UP DOWN") &&
+                  !strcmp(PHRASE_NAME[ork_set.part_phrase[2]][0], "TRILL") &&
+                  !strcmp(ork_bank.patch[ork_set.part_patch[0] - 1].name, "CELLI") &&
+                  !strcmp(ork_bank.patch[ork_set.part_patch[1] - 1].name, "VIOLINS") &&
+                  !strcmp(ork_bank.patch[ork_set.part_patch[2] - 1].name, "FLUTE") && !ork_set.part_patch[3]);
+            ork_set.arp_on = 1; ork_set.arp_mode = 0; ork_set.parts_on = 1;
+            render(10);
+            (void)ork_post(0, 0x90, 60, 100);
+            for (b = 0; b < 800u * 441u / 1280u; b++) { orkest_render(blk); if (ork_stat.voices > most) most = ork_stat.voices; }
+            check("PARTS on, one key: three parts sounding at once", most >= 3u);
+            (void)ork_post(0, 0x80, 60, 0); render(3000);
+            check("... let go (HOLD): all three end", sounding() == 0);
+            ork_set.parts_on = 0;
+            render(10);
+        }
         ork_set.arp_on = 1; ork_set.arp_mode = 0;
         for (t = 0; t < ORK_NPHRASE; t++) {         /* every phrase, mono, two keys: sane, one voice, ends when let go */
             ork_set.arp_phrase = (uint8_t)t;

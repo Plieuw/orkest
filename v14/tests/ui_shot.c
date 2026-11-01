@@ -82,5 +82,10 @@ int main(void){
   ork_set.scale = 0; ork_set.scale_root = 0;
   groove_screen_init();                                                 /* a power cycle */
   if (ork_set.scale != 2 || ork_set.scale_root != 9) { printf("screen test FAIL: scale kept (%d %d)\n", ork_set.scale, ork_set.scale_root); return 1; }
+  /* (the SEQ menu is on its PARTS page now) ALGO: the PHRASE field; K2 +1; SELECT on */
+  ctl.encoders[1] = 1; ctl.encoders[3] = 1; ctl.encoders[0] = 1; groove_screen_control();
+  ctl.encoders[1] = ctl.encoders[3] = ctl.encoders[0] = 0;
+  for(int i=0;i<40;i++)groove_screen_control(); save("build/host/screen-parts.rgb565");
+  if (!ork_set.parts_on || ork_set.part_phrase[1] != 52) { printf("screen test FAIL: PARTS (%d %d)\n", ork_set.parts_on, ork_set.part_phrase[1]); return 1; }
   printf("screen test passed (build/host/screen-*.rgb565)\n");
   return 0;}
