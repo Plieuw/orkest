@@ -485,7 +485,7 @@ int main(int argc, char **argv)
     {
         static uint8_t seq[64];
         unsigned n = 0, t, last = 255, firsts = 0;
-        static const uint8_t PRELUDE[9] = {60, 64, 67, 72, 76, 67, 72, 76, 60};
+        static const uint8_t PRELUDE[9] = {60, 64, 67, 72, 60, 64, 67, 72, 60};
         int same = 1;
         use(patch_of("HARP"));
         ork_set.arp_on = 1; ork_set.arp_phrase = 0; ork_set.arp_mode = 0; ork_set.arp_speed = 1; ork_set.arp_gate = 90;
@@ -500,9 +500,9 @@ int main(int argc, char **argv)
             }
         }
         for (t = 0; t < 9u; t++) same &= seq[t] == PRELUDE[t];
-        check("ARP, PRELUDE C on C4: C E G C E G C E, then again", same && n >= 9);
+        check("ARP, PRELUDE C on C4: C E G C, again, again", same && n >= 9);
         printf("  PRELUDE C: the 9th note %u ms after the key\n", firsts);
-        check("... at 120 BPM: the figure's repeat 1 s after the start (+-6 ms)", firsts >= 994u && firsts <= 1006u);
+        check("... at 120 BPM: its third time 1 s after the start (+-6 ms)", firsts >= 994u && firsts <= 1006u);
         render(1000);
         check("... held: it loops (still playing after 2 s)", sounding() > 0);
         (void)ork_post(0, 0x80, 60, 0);
@@ -524,15 +524,15 @@ int main(int argc, char **argv)
             (void)ork_post(0, 0x80, 60, 0);
             render(2500);
             printf("  MIDI clock 150 BPM: the 9th note %u ms after the key\n", ninth);
-            check("ARP on MIDI clock 150 BPM: the figure repeats after 0.8 s (+-10 ms)", ninth >= 790u && ninth <= 810u);
+            check("ARP on MIDI clock 150 BPM: its third time after 0.8 s (+-10 ms)", ninth >= 790u && ninth <= 810u);
             render(800);                             /* the clock gone */
         }
         ork_set.arp_mode = 1;                        /* ONCE: a short press plays it all, then ends */
         ork_set.arp_phrase = 21;                     /* FIFTH: 2 s */
         render(10);
         (void)ork_post(0, 0x90, 62, 100); render(20); (void)ork_post(0, 0x80, 62, 0);
-        render(1500);
-        check("ONCE, a short press: still playing at 1.5 s (FIFTH lasts 2 s)", sounding() > 0 && ork_stat.last_note == 65);
+        render(700);
+        check("ONCE, a short press: still playing at 0.7 s (FIFTH lasts 1 s)", sounding() > 0 && ork_stat.last_note == 65);
         render(4000);
         check("... then it ends by itself", sounding() == 0);
         ork_set.arp_phrase = 0; render(10);
@@ -576,9 +576,9 @@ int main(int argc, char **argv)
             printf("  GALLOP velocities %u .. %u (key 100)\n", lo, hi);
             check("ARP velocity: GALLOP's notes soft and accented (spread > 30)", q < ORK_NPHRASE && hi - lo > 30u);
         }
-        {   /* a velocity pattern apart from the phrase: ACCENT 3 (120 70 70) over PRELUDE C (8 notes) */
+        {   /* a velocity pattern apart from the phrase: ACCENT 3 (120 70 70) over PRELUDE C (4 notes) */
             static const uint8_t WANT_FREE[10] = {120, 70, 70, 120, 70, 70, 120, 70, 70, 120};
-            static const uint8_t WANT_LOOP[10] = {120, 70, 70, 120, 70, 70, 120, 70, 120, 70};
+            static const uint8_t WANT_LOOP[10] = {120, 70, 70, 120, 120, 70, 70, 120, 120, 70};
             uint8_t got[10];
             unsigned b, nn, pass, ok[2] = {1, 1};
             int lastn;
@@ -598,7 +598,7 @@ int main(int argc, char **argv)
                 for (b = 0; b < 10u; b++) if (b >= nn || got[b] != (pass ? WANT_LOOP : WANT_FREE)[b]) ok[pass] = 0;
                 (void)lastn;
             }
-            check("velocity pattern ACCENT 3 over an 8-note phrase, FREE: 120 70 70 runs on across the repeat", ok[0]);
+            check("velocity pattern ACCENT 3 over a 4-note phrase, FREE: 120 70 70 runs on across the repeat", ok[0]);
             check("... LOOP: from its start with each repeat", ok[1]);
             ork_set.velo_pat = 0; ork_set.velo_reset = 0;
         }
