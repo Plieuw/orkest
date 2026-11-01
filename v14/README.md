@@ -27,7 +27,7 @@ sequencer worden niet gebruikt.
 | OCT- / OCT+ | octaaf −3..+3 |
 | SAVE | klank, attack, release, room, transient, tail, LFO, ARP en octaaf bewaren (terug na herstart) |
 | MASTER | volume |
-| MIDI in (DIN/TRS, USB, Bluetooth) | noten op elk kanaal, CC 120/123 = alles uit |
+| MIDI in (DIN/TRS, USB, Bluetooth) | noten op elk kanaal, CC 120/123 = alles uit. Velocity stuurt volume én klankkleur: zachte noten doffer, harde helderder |
 
 ## Klank
 

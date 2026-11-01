@@ -481,6 +481,31 @@ int main(int argc, char **argv)
         ork_set.lfo_on = 0; ork_set.lfo_vib = 0; ork_set.lfo_sync = 0;
     }
 
+    /* ---- velocity -> tone: a soft note duller than a hard one (high frequencies' share of its energy) */
+    {
+        double bright[2];
+        unsigned q, b, k;
+        static const uint8_t VEL[2] = {127, 40};
+        use(patch_of("VIOLINS"));
+        for (q = 0; q < 2u; q++) {
+            double e = 0, d = 0;
+            int32_t prev = 0;
+            note(0x90, 67, VEL[q]);
+            render(300);
+            for (b = 0; b < 200u; b++) {
+                orkest_render(blk);
+                for (k = 0; k < FM1_BLOCK_FRAMES; k++) {
+                    int32_t x = blk[2u * k];
+                    e += (double)x * x; d += (double)(x - prev) * (x - prev); prev = x;
+                }
+            }
+            note(0x80, 67, 0); render(2500);
+            bright[q] = d / (e + 1);
+        }
+        printf("  VIOLINS G4: brightness (difference energy / energy) at 127 %.4f, at 40 %.4f\n", bright[0], bright[1]);
+        check("velocity -> tone: velocity 40 clearly duller than 127 (brightness under 2/3)", bright[1] < bright[0] * 0.67);
+    }
+
     /* ---- ARP: the phrases */
     {
         static uint8_t seq[64];

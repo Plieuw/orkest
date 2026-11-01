@@ -53,7 +53,13 @@ typedef struct {
     uint16_t w_last;             /* the sustain's level at the end of the last block, Q14 */
     uint8_t note, n2, stage, one; /* the key; the note it plays (with the layer's transposition) */
     uint8_t wk;                  /* the transient knob's share of the swell, Q8 (255: none) */
+    uint16_t lp_a;               /* velocity -> tone: its lowpass coefficient, Q15 (32767: open) */
+    int32_t lp1, lp2;            /* the lowpass's two poles */
 } voice_t;
+/* velocity -> tone: soft notes duller, hard ones brighter (orkest_tone.inc: 2 poles, 600 Hz .. open) */
+static FM1_AUDIO_DATA const uint16_t TONE[128] = {
+#include "orkest_tone.inc"
+};
 static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
@@ -259,6 +265,11 @@ static FM1_AUDIO_CODE void note_on(uint32_t note, uint32_t vel)
         if (g > 32767u)
             g = 32767u;
         pan = (uint32_t)(ly->pan + 64);          /* 0..127, 64 = centre: full on the near side */
+        {   /* brightness: the velocity, half an octave of cutoff more per octave up */
+            int32_t bi = (int32_t)vel + (n2 - 60);
+            v->lp_a = TONE[bi < 0 ? 0 : bi > 127 ? 127 : bi];
+            v->lp1 = v->lp2 = 0;
+        }
         v->gl = (uint16_t)(pan <= 64u ? g : g * (128u - pan) / 64u);
         v->gr = (uint16_t)(pan >= 64u ? g : g * pan / 64u);
     }
@@ -759,6 +770,11 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
                 s += (stream_sample(&v->r, str) * (r0 + (((r1 - r0) * (int32_t)i) >> 7))) >> 14;
             if (tremolo)
                 s = (s * (g0 + (((g1 - g0) * (int32_t)i) >> 7))) >> 15;
+            if (v->lp_a < 32767u) {                 /* velocity -> tone */
+                v->lp1 += (int32_t)(((int64_t)(s - v->lp1) * v->lp_a) >> 15);
+                v->lp2 += (int32_t)(((int64_t)(v->lp1 - v->lp2) * v->lp_a) >> 15);
+                s = v->lp2;
+            }
             out[2u * i] += (s * v->gl) >> 16;       /* each voice at -6 dB: big chords reach the soft clip */
             out[2u * i + 1u] += (s * v->gr) >> 16;
         }
