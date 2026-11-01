@@ -76,7 +76,7 @@ const TEXT = {
     factory: "De fabrieksklanken van V15 terugzetten",
     classic: "De eerdere Orkest (op Felucca gebouwd, eigen engine):",
     nomidi: "Dit werkt niet in deze browser. Open de pagina in Chrome of Edge.", loadfail: "Kon niet laden: ",
-    start: "Bezig met starten", verify: "Controleren", loader: "Overschakelen naar update-modus", write: "Schrijven",
+    start: "Bezig met starten", verify: "Controleren", loader: "Overschakelen naar update-modus", replug: "Niet gezien: haal de USB-kabel eruit en steek hem er weer in (de installatie gaat dan vanzelf verder)", write: "Schrijven",
     reboot: "Herstarten", done: "Klaar", fwdone: "Firmware klaar. Ga door met stap 2.",
     stopped: "Gestopt. Steek de USB-kabel opnieuw in en probeer het nog eens.",
     error: "Fout: ",
@@ -113,7 +113,7 @@ const TEXT = {
     factory: "Restoring V15's factory voices",
     classic: "The earlier Orkest (built on Felucca, its own engine):",
     nomidi: "This browser cannot do it. Open the page in Chrome or Edge.", loadfail: "Could not load: ",
-    start: "Starting", verify: "Verifying", loader: "Switching to update mode", write: "Writing",
+    start: "Starting", verify: "Verifying", loader: "Switching to update mode", replug: "Not seen: unplug the USB cable and plug it back in (the install then goes on by itself)", write: "Writing",
     reboot: "Restarting", done: "Done", fwdone: "Firmware done. Continue with step 2.",
     stopped: "Stopped. Replug the USB cable and try again.",
     error: "Error: ",
@@ -182,6 +182,7 @@ function step() {
     if (k === "start") sayK("start");
     if (k === "verify") { sayK("verify"); $("bar").value = (a / total) * 100; }
     if (k === "loader") sayK("loader");
+    if (k === "replug") sayK("replug");
     if (k === "write") { sayK("write"); $("bar").value = ((74 + a) / total) * 100; }
     if (k === "reboot") sayK("reboot");
     if (k === "done") { $("bar").value = 100; sayK("done"); }

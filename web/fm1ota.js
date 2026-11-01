@@ -232,7 +232,11 @@ export class Updater {
     if (!s1.finished) throw fail(s1.lost ? "lost" : "stopped", `the device ${s1.lost ? "was disconnected" : "stopped"} after ${s1.served} requests: nothing was written`);
     step("loader");
     await sleep(3000);
-    const ota = await this.waitFor((id) => id.model === "ota-" + model, 30000);
+    let ota = await this.waitFor((id) => id.model === "ota-" + model, 30000);
+    if (!ota) {   // not seen yet (the computer missed it coming back as the loader): replug, and it goes on from there
+      step("replug");
+      ota = await this.waitFor((id) => id.model === "ota-" + model, 180000);
+    }
     if (!ota) throw fail("noloader", "the update loader did not appear. Replug the USB cable and press Install again: the device stays in update mode until it is finished.");
     const s2 = await this.write(ota, image, step);
     if (!s2.finished) throw fail(s2.lost ? "lost" : "stopped", `the loader ${s2.lost ? "was disconnected" : "stopped"} after ${s2.served} requests. Replug and press Install again to resume.`);
