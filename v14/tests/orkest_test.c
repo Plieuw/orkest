@@ -581,6 +581,39 @@ int main(int argc, char **argv)
               m[0] < 10u && m[1] > 245u && m[2] > 100u && m[2] < 155u && m[3] == 0u);
         ork_set.morph_mode = 0; ork_set.part[1].patch = 255;
     }
+    {   /* the morph of the phrases: part 1 OSTINATO (C C Eb C G ...), part 2 OCTAVES (C4 C5); at the top only part 2's
+         * notes; looping up and down over a bar each way: both phrases' notes */
+        unsigned q1, q2, b, w, seen[2][128];
+        for (q1 = 0; q1 < ORK_NPHRASE && strcmp(PHRASE_NAME[q1][0], "OSTINATO"); q1++) ;
+        for (q2 = 0; q2 < ORK_NPHRASE && strcmp(PHRASE_NAME[q2][0], "OCTAVES"); q2++) ;
+        memset(seen, 0, sizeof seen);
+        use(patch_of("HARP"));
+        ork_set.part[1].patch = (uint8_t)patch_of("PIZZICATO");
+        ork_set.arp_on = 1; ork_set.arp_mode = 0; ork_set.part[0].phrase = (uint8_t)q1; ork_set.part[1].phrase = (uint8_t)q2;
+        ork_set.part[1].oct = 0; ork_set.part[0].oct = 0;
+        for (w = 0; w < 2u; w++) {
+            ork_set.morph_mode = w ? 2 : 1; ork_set.morph_a = w ? 6 : 0; ork_set.morph_d = w ? 6 : 0;
+            render(10);
+            (void)ork_post(0, 0x90, 60, 100);
+            for (b = 0; b < (w ? 4200u : 1500u) * 441u / 1280u; b++) {
+                unsigned before = ork_stat.last_note;
+                ork_stat.last_note = 255;
+                orkest_render(blk);
+                if (ork_stat.last_note != 255) seen[w][ork_stat.last_note] = 1; else ork_stat.last_note = (uint8_t)before;
+            }
+            (void)ork_post(0, 0x80, 60, 0); render(2500);
+        }
+        printf("  morph: at the top C4 %u C5 %u Eb4 %u G4 %u; looping: Eb4 %u G4 %u C5 %u\n", seen[0][60], seen[0][72],
+               seen[0][63], seen[0][67], seen[1][63], seen[1][67], seen[1][72]);
+        check("MORPH of the phrases: at the top part 2's notes only (C4 C5)", seen[0][60] && seen[0][72] && !seen[0][63] && !seen[0][67]);
+        {
+            unsigned n, other = 0;
+            for (n = 0; n < 128u; n++) if (seen[1][n] && n != 60u && n != 63u && n != 67u) other++;
+            check("... up and down: part 1's notes, and notes drawn towards part 2's", (seen[1][63] || seen[1][67]) && other);
+        }
+        ork_set.morph_mode = 0; ork_set.part[1].patch = 255; ork_set.part[0].phrase = 0; ork_set.arp_on = 0;
+        render(100);
+    }
 
     /* ---- polyphony: 16 notes, last note priority */
     {

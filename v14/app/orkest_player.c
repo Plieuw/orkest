@@ -372,9 +372,9 @@ static FM1_AUDIO_CODE void note_on(uint32_t note, uint32_t vel)
     uint32_t p;
     layer_nid = 0;
     for (p = 0; p < 2u; p++)
-        if (ork_set.part[p].patch < ork_bank.np && (ork_set.part[p].level || ork_set.morph_mode)) {
+        if (ork_set.part[p].patch < ork_bank.np && ork_set.part[p].level) {
             cur_layer = (uint8_t)p;
-            note_on_p(ork_set.part[p].patch, note, vel, 0, -1, 0, ork_set.morph_mode ? 100u : ork_set.part[p].level);
+            note_on_p(ork_set.part[p].patch, note, vel, 0, -1, 0, ork_set.part[p].level);
             layer_nid = note_clock;              /* (the layer just started: the second keeps it) */
         }
     layer_nid = 0;
@@ -433,6 +433,55 @@ static FM1_AUDIO_CODE void clock_tick(void)
     }
     clk_age = 0;
 }
+/* ------------------------------------------------------------- morph --- */
+/* SEQ MORPH: an AD envelope on the tempo (from each key) that morphs part 1's phrase into part 2's and back. Both
+ * phrases run on (each its speed); each note either keeps to its own phrase or gives way, by a threshold of its own
+ * against the envelope (so more and more of part 2's notes come in as it rises), and its pitch is drawn towards where
+ * the other phrase is by as much, kept in the key (the scale, or natural minor on the key) */
+static FM1_AUDIO_DATA const uint16_t MORPH_TICKS[ORK_NMORPH] = ORK_MORPH_TICKS_INIT;
+static uint32_t morph_pos;                       /* ticks (Q16) since the key */
+static int32_t morph_x;                          /* the envelope: 0 part 1 .. 32767 part 2 */
+static FM1_AUDIO_CODE void morph_start(void) { morph_pos = 0; }
+static FM1_AUDIO_CODE void morph_block(uint32_t beat_inc)
+{
+    uint32_t a, d, t;
+    int32_t x;
+    if (!ork_set.morph_mode) {
+        morph_x = 0;
+        ork_stat.morph = 0;
+        return;
+    }
+    a = (uint32_t)MORPH_TICKS[ork_set.morph_a % ORK_NMORPH] << 16;
+    d = (uint32_t)MORPH_TICKS[ork_set.morph_d % ORK_NMORPH] << 16;
+    if (ork_set.morph_mode == 2u && a + d && morph_pos >= a + d)
+        morph_pos -= a + d;                      /* looping */
+    t = morph_pos;
+    if (t < a)
+        x = (int32_t)(((uint64_t)t << 15) / a);
+    else if (t < a + d)
+        x = 32767 - (int32_t)(((uint64_t)(t - a) << 15) / d);
+    else
+        x = a + d ? 0 : 32767;                   /* once: back at part 1 (no times at all: part 2) */
+    x = x < 0 ? 0 : x > 32767 ? 32767 : x;
+    switch (ork_set.morph_curve & 3u) {          /* the curve */
+    case 1: x = (int32_t)((int64_t)x * x >> 15); break;                                   /* slow start */
+    case 2: x = 32767 - (int32_t)((int64_t)(32767 - x) * (32767 - x) >> 15); break;       /* fast start */
+    case 3: x = (int32_t)(((int64_t)x * x >> 15) * (98304 - 2 * x) >> 15); break;          /* S: 3x^2 - 2x^3 */
+    default: break;
+    }
+    morph_x = x < 0 ? 0 : x > 32767 ? 32767 : x;
+    ork_stat.morph = (uint8_t)(morph_x >> 7);
+    morph_pos += beat_inc;
+}
+static FM1_AUDIO_CODE uint32_t morph_thresh(uint32_t idx, uint32_t salt)   /* a note's own threshold, 1..32767 */
+{
+    uint32_t h = (idx + 1u) * 2654435761u ^ salt;
+    h ^= h >> 15;
+    h *= 2246822519u;
+    h ^= h >> 13;
+    return ((h >> 8) & 32766u) + 1u;
+}
+
 /* ------------------------------------------------------------ phrases --- */
 /* ARP: monophonic, last key priority: the newest key plays the chosen phrase from its note (or, with PARTS, each part
  * chosen in the ARP menu its own phrase); each phrase is one line, one note at a time. Positions in MIDI clock ticks, Q16; a phrase's notes start on the block they fall in
@@ -449,6 +498,20 @@ static FM1_AUDIO_CODE int32_t scale_snap(int32_t n)
         if (n - (int32_t)d >= 0 && (mask >> ((uint32_t)(n - (int32_t)d + 120 - (int32_t)root) % 12u) & 1u))
             return n - (int32_t)d;
         if (mask >> ((uint32_t)(n + (int32_t)d + 120 - (int32_t)root) % 12u) & 1u)
+            return n + (int32_t)d;
+    }
+    return n;
+}
+/* the scale chosen (SCL), else natural minor on the key: where a morphed note lands */
+static FM1_AUDIO_CODE int32_t key_snap(int32_t n, int32_t key)
+{
+    uint32_t d, root = (uint32_t)key % 12u;
+    if (ork_set.scale)
+        return scale_snap(n);
+    for (d = 0; d < 7u; d++) {
+        if (n - (int32_t)d >= 0 && (0x5ADu >> ((uint32_t)(n - (int32_t)d + 120 - (int32_t)root) % 12u) & 1u))
+            return n - (int32_t)d;
+        if (0x5ADu >> ((uint32_t)(n + (int32_t)d + 120 - (int32_t)root) % 12u) & 1u)
             return n + (int32_t)d;
     }
     return n;
@@ -485,6 +548,8 @@ typedef struct {
     uint8_t patch, phrase;                       /* what it plays (taken at the key) */
     int8_t shift;                                /* its octave, semitones */
     int16_t prev;                                /* the note it played last (a slide's start), -1 none */
+    int8_t cur;                                  /* MORPH: its phrase's last note (interval), where it is now */
+    uint8_t curv;                                /* (cur set) */
     uint16_t idx;                                /* the next note in the phrase */
     uint16_t vstep;                              /* the velocity pattern's next step */
     uint32_t pos;                                /* ticks into the phrase, Q16 */
@@ -521,6 +586,7 @@ static FM1_AUDIO_CODE void runs_start(uint32_t key, uint32_t vel)
         r->pos = 0;
         r->vstep = 0;
         r->prev = -1;
+        r->curv = 0;
         r->patch = pt->patch;
         r->phrase = pt->phrase;
         r->shift = (int8_t)(12 * (pt->oct < -2 ? -2 : pt->oct > 2 ? 2 : pt->oct));
@@ -553,19 +619,51 @@ static FM1_AUDIO_CODE void phrases_sync(void)   /* before the block's events: AR
                 run_end(&run[i]);
         }
 }
+static FM1_AUDIO_CODE int32_t speed_log2(uint32_t sp) { return sp == 0u ? -1 : sp == 2u ? 1 : sp == 3u ? -2 : 0; }
+/* a note of a part: its pitch, velocity (0: a rest), the patch and the runner whose slot sounds it */
+static FM1_AUDIO_CODE void phrase_note(run_t *slot, uint32_t src, uint32_t layer, const struct ork_part *pt, run_t *own,
+                                       const ork_pev_t *e, int32_t n, uint32_t inc, int32_t lshift)
+{
+    int32_t gate = pt->gate < 10u ? 10 : pt->gate > 100u ? 100 : (int32_t)pt->gate, left;
+    uint32_t vel, gl;
+    if (n < 0 || n > 127)
+        return;
+    vel = phrase_vel(own->vel, e->vel, pt, &own->vstep);
+    if (!vel)
+        return;                                  /* the velocity pattern rests: no note (the last one plays on) */
+    run_quiet(slot);                             /* one note at a time */
+    gl = e->slide && slot->prev >= 0 && inc ? ((uint32_t)e->len << 15) / inc : 0u;   /* a slide: half the note */
+    cur_layer = (uint8_t)layer;
+    note_on_p(own->patch, (uint32_t)n, vel, src, e->slide ? slot->prev : -1, gl < 4u && gl ? 4u : gl,
+              ork_set.morph_mode ? 100u : pt->level);
+    slot->prev = (int16_t)n;
+    slot->note[slot->nn] = (uint8_t)n;
+    if (pt->human) {                             /* humanize the length too: +- up to 35 points of the gate */
+        int32_t span = (int32_t)(pt->human > 100u ? 100u : pt->human) * 35 / 100;
+        velo_rng = velo_rng * 1664525u + 1013904223u;
+        gate += (int32_t)((velo_rng >> 16) % (uint32_t)(2 * span + 1)) - span;
+        gate = gate < 5 ? 5 : gate > 100 ? 100 : gate;
+    }
+    left = (int32_t)(((uint32_t)e->len * (uint32_t)gate << 16) / 100u);   /* in the slot's ticks */
+    slot->left[slot->nn] = lshift >= 0 ? left << lshift : left >> -lshift;
+    slot->nn++;
+}
 static FM1_AUDIO_CODE void phrases(void)
 {
-    uint32_t i, k, beat_inc;
-    const ork_phrase_t *ph;
+    uint32_t i, k, beat_inc, inc[NRUN], oni[NRUN];
+    const ork_pev_t *on[NRUN] = {0, 0};
+    int morph;
     if (!ork_set.arp_on)
         return;
     /* ticks this block: from MIDI clock while it runs (2^31 / its tick length in samples Q8), else the tempo */
     beat_inc = ork_stat.clock && clk_len_q8 ? 2147483648u / clk_len_q8 : ork_set.arp_inc;
+    morph = ork_set.morph_mode && run[0].on && run[1].on;
     for (i = 0; i < NRUN; i++) {
         run_t *r = &run[i];
         const struct ork_part *pt = &ork_set.part[i];
-        uint32_t inc = pt->speed == 0u ? beat_inc >> 1 : pt->speed == 2u ? beat_inc << 1 : pt->speed == 3u ? beat_inc >> 2
-                       : beat_inc;   /* 0 half, 1 as written, 2 double, 3 a quarter */
+        const ork_phrase_t *ph;
+        int32_t sh = speed_log2(pt->speed);
+        inc[i] = sh >= 0 ? beat_inc << sh : beat_inc >> -sh;
         if (!r->on)
             continue;
         if (r->phrase >= ORK_NPHRASE) {
@@ -584,7 +682,7 @@ static FM1_AUDIO_CODE void phrases(void)
         for (;;) {
             if (r->idx >= ph->n && r->pos >= (uint32_t)ph->len << 16) {   /* the end of the phrase */
                 if (ork_set.arp_mode == 1u) {
-                    if (!r->nn)
+                    if (!r->nn && !(morph && i == 0u && run[1].on))
                         r->on = 0;
                     break;
                 }
@@ -594,45 +692,40 @@ static FM1_AUDIO_CODE void phrases(void)
             if (r->idx >= ph->n || ((uint32_t)PEV[ph->first + r->idx].at << 16) > r->pos)
                 break;
             {
-                const ork_pev_t *e = &PEV[ph->first + r->idx++];
-                int32_t n = scale_snap((int32_t)r->key + r->shift + e->iv);
-                int32_t gate = pt->gate < 10u ? 10 : pt->gate > 100u ? 100 : (int32_t)pt->gate;
-                if (n < 0 || n > 127)
-                    continue;
-                {
-                    uint32_t vel = phrase_vel(r->vel, e->vel, pt, &r->vstep);
-                    if (!vel)
-                        continue;                /* the velocity pattern rests: no note (the last one plays on) */
-                run_quiet(r);                    /* one note at a time */
-                {   /* a slide: over half the note (in blocks at this tempo), at least ~12 ms */
-                    uint32_t gl = e->slide && r->prev >= 0 && inc ? ((uint32_t)e->len << 15) / inc : 0u;
-                    cur_layer = (uint8_t)i;
-                    note_on_p(r->patch, (uint32_t)n, vel, i + 1u, e->slide ? r->prev : -1, gl < 4u && gl ? 4u : gl,
-                              ork_set.morph_mode ? 100u : pt->level);
-                }
-                }
-                r->prev = (int16_t)n;
-                r->note[r->nn] = (uint8_t)n;
-                if (pt->human) {                 /* humanize the length too: +- up to 35 points of the gate */
-                    int32_t span = (int32_t)(pt->human > 100u ? 100u : pt->human) * 35 / 100;
-                    velo_rng = velo_rng * 1664525u + 1013904223u;
-                    gate += (int32_t)((velo_rng >> 16) % (uint32_t)(2 * span + 1)) - span;
-                    gate = gate < 5 ? 5 : gate > 100 ? 100 : gate;
-                }
-                r->left[r->nn] = (int32_t)(((uint32_t)e->len * (uint32_t)gate << 16) / 100u);
-                r->nn++;
+                const ork_pev_t *e = &PEV[ph->first + r->idx];
+                oni[i] = r->idx++;
+                if (morph) {                     /* (MORPH: the onsets weighed below) */
+                    on[i] = e;
+                    r->cur = (int8_t)(e->iv + r->shift);
+                    r->curv = 1;
+                } else
+                    phrase_note(r, i + 1u, i, pt, r, e, scale_snap((int32_t)r->key + r->shift + e->iv), inc[i], 0);
             }
         }
         if (!r->on)
             continue;
-        r->pos += inc;
+        r->pos += inc[i];
         for (k = 0; k < r->nn; k++)
-            r->left[k] -= (int32_t)inc;
+            r->left[k] -= (int32_t)inc[i];
+    }
+    if (morph) {   /* a note keeps to its phrase while the envelope is under its threshold, then gives way */
+        int c = -1;
+        int a_ok = on[0] && morph_x < (int32_t)morph_thresh(oni[0], 0x5A5Au);
+        int b_ok = on[1] && morph_x >= (int32_t)morph_thresh(oni[1], 0xC3C3u);
+        c = a_ok && b_ok ? (morph_x >= 16384 ? 1 : 0) : a_ok ? 0 : b_ok ? 1 : -1;
+        if (c >= 0) {
+            const ork_pev_t *e = on[c];
+            int o = 1 - c;
+            int32_t mine = e->iv + run[c].shift, other = run[o].curv ? run[o].cur : mine;
+            int32_t w = c ? 32767 - morph_x : morph_x;   /* how far towards the other phrase */
+            int32_t iv = mine + (((other - mine) * w + (w >= 0 ? 16384 : -16384)) >> 15);
+            int32_t key = (int32_t)run[0].key;
+            phrase_note(&run[0], 1u, (uint32_t)c, &ork_set.part[c], &run[c], e, key_snap(key + iv, key), inc[c],
+                        speed_log2(ork_set.part[0].speed) - speed_log2(ork_set.part[c].speed));
+        }
     }
 }
 
-static uint32_t morph_pos;                       /* the morph: ticks (Q16) since the key */
-static FM1_AUDIO_CODE void morph_start(void) { morph_pos = 0; }
 static FM1_AUDIO_CODE void events(void)
 {
     uint32_t l;
@@ -786,54 +879,6 @@ static inline __attribute__((always_inline)) uint32_t isqrt32(uint32_t x)
 /* ----------------------------------------------------------- render --- */
 FM1_AUDIO_CODE unsigned orkest_output_level(void) { return ork_set.master; }
 
-/* ------------------------------------------------------------- morph --- */
-static FM1_AUDIO_DATA const uint16_t MORPH_TICKS[ORK_NMORPH] = ORK_MORPH_TICKS_INIT;
-
-static uint16_t morph_g[2] = {32767, 0}, morph_g0[2] = {32767, 0};   /* the layers' gains, this block and the last (Q15) */
-
-/* about sin(pi/2 x) for x in 0..32767 (Q15): x (2 - x), the (nearly) equal-power gain (+0.5 dB at the middle) */
-static inline __attribute__((always_inline)) int32_t eqp(int32_t x)
-{
-    int32_t g = (int32_t)(((int64_t)x * (65534 - x)) >> 15);
-    return g > 32767 ? 32767 : g;
-}
-static FM1_AUDIO_CODE void morph_block(uint32_t beat_inc)
-{
-    uint32_t a, d, t;
-    int32_t x;
-    morph_g0[0] = morph_g[0];
-    morph_g0[1] = morph_g[1];
-    if (!ork_set.morph_mode) {
-        morph_g[0] = 32767;
-        morph_g[1] = 32767;
-        ork_stat.morph = 0;
-        return;
-    }
-    a = (uint32_t)MORPH_TICKS[ork_set.morph_a % ORK_NMORPH] << 16;
-    d = (uint32_t)MORPH_TICKS[ork_set.morph_d % ORK_NMORPH] << 16;
-    if (ork_set.morph_mode == 2u && a + d && morph_pos >= a + d)
-        morph_pos -= a + d;                      /* looping */
-    t = morph_pos;
-    if (t < a)
-        x = (int32_t)((((uint64_t)t << 15) / a));
-    else if (t < a + d)
-        x = 32767 - (int32_t)((((uint64_t)(t - a) << 15) / d));
-    else
-        x = a + d ? 0 : 32767;                   /* once: back at layer 1 (no times at all: layer 2) */
-    x = x < 0 ? 0 : x > 32767 ? 32767 : x;
-    switch (ork_set.morph_curve & 3u) {          /* the curve */
-    case 1: x = (int32_t)((int64_t)x * x >> 15); break;                                   /* slow start */
-    case 2: x = 32767 - (int32_t)((int64_t)(32767 - x) * (32767 - x) >> 15); break;       /* fast start */
-    case 3: x = (int32_t)(((int64_t)x * x >> 15) * (98301 - 2 * x) >> 15); break;          /* S: 3x^2 - 2x^3 */
-    default: break;
-    }
-    x = x < 0 ? 0 : x > 32767 ? 32767 : x;
-    ork_stat.morph = (uint8_t)(x >> 7);
-    morph_g[1] = (uint16_t)eqp(x);
-    morph_g[0] = (uint16_t)eqp(32767 - x);
-    morph_pos += beat_inc;
-}
-
 FM1_AUDIO_CODE int orkest_render(int32_t *out)
 {
     uint32_t i, k, busy = 0;
@@ -880,8 +925,8 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
             lfo_phase += ork_set.lfo_inc;           /* free (Hz) or the internal tempo */
         lfo_s = lfo_sine(lfo_phase);
     }
-    phrases();
     morph_block(ork_stat.clock && clk_len_q8 ? 2147483648u / clk_len_q8 : ork_set.arp_inc);
+    phrases();
     for (k = 0; k < NVOICE; k++) {
         voice_t *v = &voice[k];
         uint32_t stt = v->t.step, stl = v->l.step, str = v->r.step, lend;
@@ -949,10 +994,6 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
                 v->lp1 += (int32_t)(((int64_t)(s - v->lp1) * v->lp_a) >> 15);
                 v->lp2 += (int32_t)(((int64_t)(v->lp1 - v->lp2) * v->lp_a) >> 15);
                 s = v->lp2;
-            }
-            if (ork_set.morph_mode) {               /* the morph: this layer's gain, glided over the block */
-                int32_t mg0 = morph_g0[v->layer & 1u], mg1 = morph_g[v->layer & 1u];
-                s = (int32_t)(((int64_t)s * (mg0 + (((mg1 - mg0) * (int32_t)i) >> 7))) >> 15);
             }
             out[2u * i] += (s * v->gl) >> 16;       /* each voice at -6 dB: big chords reach the soft clip */
             out[2u * i + 1u] += (s * v->gr) >> 16;
