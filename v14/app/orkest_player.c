@@ -56,6 +56,7 @@ typedef struct {
     uint16_t lp_a;               /* velocity -> tone: its lowpass coefficient, Q15 (32767: open) */
     uint8_t src;                 /* who started it: 0 a key (or MIDI), else ARP's runner + 1 */
     uint8_t vf, tf;              /* the instrument's share of the LFO's vibrato and tremolo, Q7 (128 = all) */
+    uint8_t layer;               /* the layer it plays: 0, 1 (the morph's gain) */
     uint32_t nid;                /* the note it belongs to (its layers share it): polyphony counts notes */
     uint32_t g_t, g_l;           /* a slide: the transient's and the sustain's steps it starts from */
     uint16_t g_n, g_total;       /* the slide's blocks to go, of */
@@ -69,8 +70,8 @@ static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
 struct ork_settings ork_set = {0, 8, 3, 40, 100, 1, 92, 40, 12, 8, 0, 0, 1, 8, 64, 64, 0, 0, 0, 0,
-                               {{0, 0, 1, 90, 0, 0, 100, 0, 100}, {255, 39, 1, 90, 1, 0, 100, 0, 100}}, 0, 100, 9131};
-struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0};
+                               {{0, 0, 1, 90, 0, 0, 100, 0, 100}, {255, 39, 1, 90, 1, 0, 100, 0, 100}}, 0, 100, 0, 6, 6, 3, 9131};
+struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0, 0};
 
 /* ------------------------------------------------------------ events --- */
 enum { QN = 64u };
@@ -276,6 +277,7 @@ static FM1_AUDIO_CODE void poly_limit(void)
             release_voice(&voice[i], 8u, 0);
 }
 /* from: a slide from that note (its pitch gliding to `note` over `glide` blocks), or -1 */
+static uint8_t cur_layer;                        /* the layer the next note_on_p plays (the morph's gain) */
 static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel, uint32_t src, int32_t from,
                                      uint32_t glide, uint32_t level)
 {
@@ -342,6 +344,7 @@ static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel
         v->stage = ST_ATTACK;
         v->note = (uint8_t)note;
         v->src = (uint8_t)src;
+        v->layer = cur_layer;
         v->nid = note_clock;
         v->n2 = (uint8_t)n2;
         v->age = ++voice_clock;
@@ -369,8 +372,9 @@ static FM1_AUDIO_CODE void note_on(uint32_t note, uint32_t vel)
     uint32_t p;
     layer_nid = 0;
     for (p = 0; p < 2u; p++)
-        if (ork_set.part[p].patch < ork_bank.np && ork_set.part[p].level) {
-            note_on_p(ork_set.part[p].patch, note, vel, 0, -1, 0, ork_set.part[p].level);
+        if (ork_set.part[p].patch < ork_bank.np && (ork_set.part[p].level || ork_set.morph_mode)) {
+            cur_layer = (uint8_t)p;
+            note_on_p(ork_set.part[p].patch, note, vel, 0, -1, 0, ork_set.morph_mode ? 100u : ork_set.part[p].level);
             layer_nid = note_clock;              /* (the layer just started: the second keeps it) */
         }
     layer_nid = 0;
@@ -601,8 +605,9 @@ static FM1_AUDIO_CODE void phrases(void)
                 run_quiet(r);                    /* one note at a time */
                 {   /* a slide: over half the note (in blocks at this tempo), at least ~12 ms */
                     uint32_t gl = e->slide && r->prev >= 0 && inc ? ((uint32_t)e->len << 15) / inc : 0u;
+                    cur_layer = (uint8_t)i;
                     note_on_p(r->patch, (uint32_t)n, vel, i + 1u, e->slide ? r->prev : -1, gl < 4u && gl ? 4u : gl,
-                              pt->level);
+                              ork_set.morph_mode ? 100u : pt->level);
                 }
                 }
                 r->prev = (int16_t)n;
@@ -625,6 +630,8 @@ static FM1_AUDIO_CODE void phrases(void)
     }
 }
 
+static uint32_t morph_pos;                       /* the morph: ticks (Q16) since the key */
+static FM1_AUDIO_CODE void morph_start(void) { morph_pos = 0; }
 static FM1_AUDIO_CODE void events(void)
 {
     uint32_t l;
@@ -659,6 +666,7 @@ static FM1_AUDIO_CODE void events(void)
             if (st == 0x90u && d2) {
                 if (held[d1] < 255u)
                     held[d1]++;
+                morph_start();                      /* each key starts the morph */
                 if (ork_set.arp_on)                 /* ARP: the key plays its phrase */
                     runs_start(d1, d2);
                 else
@@ -777,6 +785,54 @@ static inline __attribute__((always_inline)) uint32_t isqrt32(uint32_t x)
 /* ----------------------------------------------------------- render --- */
 FM1_AUDIO_CODE unsigned orkest_output_level(void) { return ork_set.master; }
 
+/* ------------------------------------------------------------- morph --- */
+static FM1_AUDIO_DATA const uint16_t MORPH_TICKS[ORK_NMORPH] = ORK_MORPH_TICKS_INIT;
+
+static uint16_t morph_g[2] = {32767, 0}, morph_g0[2] = {32767, 0};   /* the layers' gains, this block and the last (Q15) */
+
+/* about sin(pi/2 x) for x in 0..32767 (Q15): x (2 - x), the (nearly) equal-power gain (+0.5 dB at the middle) */
+static inline __attribute__((always_inline)) int32_t eqp(int32_t x)
+{
+    int32_t g = (int32_t)(((int64_t)x * (65534 - x)) >> 15);
+    return g > 32767 ? 32767 : g;
+}
+static FM1_AUDIO_CODE void morph_block(uint32_t beat_inc)
+{
+    uint32_t a, d, t;
+    int32_t x;
+    morph_g0[0] = morph_g[0];
+    morph_g0[1] = morph_g[1];
+    if (!ork_set.morph_mode) {
+        morph_g[0] = 32767;
+        morph_g[1] = 32767;
+        ork_stat.morph = 0;
+        return;
+    }
+    a = (uint32_t)MORPH_TICKS[ork_set.morph_a % ORK_NMORPH] << 16;
+    d = (uint32_t)MORPH_TICKS[ork_set.morph_d % ORK_NMORPH] << 16;
+    if (ork_set.morph_mode == 2u && a + d && morph_pos >= a + d)
+        morph_pos -= a + d;                      /* looping */
+    t = morph_pos;
+    if (t < a)
+        x = (int32_t)((((uint64_t)t << 15) / a));
+    else if (t < a + d)
+        x = 32767 - (int32_t)((((uint64_t)(t - a) << 15) / d));
+    else
+        x = a + d ? 0 : 32767;                   /* once: back at layer 1 (no times at all: layer 2) */
+    x = x < 0 ? 0 : x > 32767 ? 32767 : x;
+    switch (ork_set.morph_curve & 3u) {          /* the curve */
+    case 1: x = (int32_t)((int64_t)x * x >> 15); break;                                   /* slow start */
+    case 2: x = 32767 - (int32_t)((int64_t)(32767 - x) * (32767 - x) >> 15); break;       /* fast start */
+    case 3: x = (int32_t)(((int64_t)x * x >> 15) * (98301 - 2 * x) >> 15); break;          /* S: 3x^2 - 2x^3 */
+    default: break;
+    }
+    x = x < 0 ? 0 : x > 32767 ? 32767 : x;
+    ork_stat.morph = (uint8_t)(x >> 7);
+    morph_g[1] = (uint16_t)eqp(x);
+    morph_g[0] = (uint16_t)eqp(32767 - x);
+    morph_pos += beat_inc;
+}
+
 FM1_AUDIO_CODE int orkest_render(int32_t *out)
 {
     uint32_t i, k, busy = 0;
@@ -824,6 +880,7 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
         lfo_s = lfo_sine(lfo_phase);
     }
     phrases();
+    morph_block(ork_stat.clock && clk_len_q8 ? 2147483648u / clk_len_q8 : ork_set.arp_inc);
     for (k = 0; k < NVOICE; k++) {
         voice_t *v = &voice[k];
         uint32_t stt = v->t.step, stl = v->l.step, str = v->r.step, lend;
@@ -891,6 +948,10 @@ FM1_AUDIO_CODE int orkest_render(int32_t *out)
                 v->lp1 += (int32_t)(((int64_t)(s - v->lp1) * v->lp_a) >> 15);
                 v->lp2 += (int32_t)(((int64_t)(v->lp1 - v->lp2) * v->lp_a) >> 15);
                 s = v->lp2;
+            }
+            if (ork_set.morph_mode) {               /* the morph: this layer's gain, glided over the block */
+                int32_t mg0 = morph_g0[v->layer & 1u], mg1 = morph_g[v->layer & 1u];
+                s = (int32_t)(((int64_t)s * (mg0 + (((mg1 - mg0) * (int32_t)i) >> 7))) >> 15);
             }
             out[2u * i] += (s * v->gl) >> 16;       /* each voice at -6 dB: big chords reach the soft clip */
             out[2u * i + 1u] += (s * v->gr) >> 16;

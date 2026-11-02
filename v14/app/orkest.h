@@ -121,6 +121,10 @@ struct ork_settings {
     /* GLO: panning; pan_mode 0 the concert seating (orkest_seats.inc), 1 the sound's own layer pans; pan_spread
      * 0..127 % of it (0: all in the middle) */
     volatile uint8_t pan_mode, pan_spread;
+    /* SEQ: MORPH, an AD envelope on the tempo from layer 1 to layer 2 (attack) and back (decay), started by each key:
+     * mode 0 off, 1 once, 2 looping; attack and decay ORK_MORPH_TICKS[...] clock ticks; curve 0 linear, 1 slow start
+     * (x^2), 2 fast start, 3 S. While on it mixes the layers (equal power) in place of HOME's MIX */
+    volatile uint8_t morph_mode, morph_a, morph_d, morph_curve;
     volatile uint32_t arp_inc;
 };
 /* a phrase's note: start (ticks, 24 a quarter note), length (ticks), interval from the key (semitones), velocity */
@@ -134,7 +138,10 @@ struct ork_status {
     volatile uint8_t voices, last_note, last_vel, idle;   /* idle: not playing from the bank (ork_player_stop) */
     volatile uint8_t clock;                               /* MIDI clock is coming in */
     volatile uint16_t clock_bpm10;                        /* its tempo, 0.1 BPM */
+    volatile uint8_t morph;                               /* the morph's place: 0 layer 1 .. 255 layer 2 */
 };
+#define ORK_NMORPH 12u
+#define ORK_MORPH_TICKS_INIT {0, 6, 12, 24, 48, 72, 96, 144, 192, 288, 384, 768}
 extern struct ork_status ork_stat;
 
 /* Note events into the player: lane 0 the control task (keys), lane 1 the MIDI routing task. One producer each.

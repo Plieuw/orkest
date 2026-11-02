@@ -561,6 +561,27 @@ int main(int argc, char **argv)
         ork_set.part[0].level = 100;
     }
 
+    /* ---- the morph (SEQ): ONCE, attack 1 beat, decay 1 beat, linear, at 120 BPM: layer 1, layer 2 at 0.5 s, back at 1 s */
+    {
+        unsigned b, m[4];
+        ork_set.arp_inc = (uint32_t)((65536ull * 24u * 128u * 120u) / (60u * 44100u));
+        ork_set.morph_mode = 1; ork_set.morph_a = 3; ork_set.morph_d = 3; ork_set.morph_curve = 0;
+        use(patch_of("FLUTE")); ork_set.part[1].patch = (uint8_t)patch_of("OBOE");
+        note(0x90, 72, 100);
+        for (b = 0; b < 1200u * 441u / 1280u; b++) {
+            orkest_render(blk);
+            if (b == 2u) m[0] = ork_stat.morph;
+            if (b == 172u) m[1] = ork_stat.morph;      /* 0.5 s */
+            if (b == 258u) m[2] = ork_stat.morph;      /* 0.75 s */
+            if (b == 400u) m[3] = ork_stat.morph;      /* past 1 s */
+        }
+        note(0x80, 72, 0); render(2500);
+        printf("  morph: %u at the key, %u at 0.5 s, %u at 0.75 s, %u past 1 s\n", m[0], m[1], m[2], m[3]);
+        check("MORPH once, 1 beat up, 1 beat down: layer 1, layer 2, halfway back, layer 1",
+              m[0] < 10u && m[1] > 245u && m[2] > 100u && m[2] < 155u && m[3] == 0u);
+        ork_set.morph_mode = 0; ork_set.part[1].patch = 255;
+    }
+
     /* ---- polyphony: 16 notes, last note priority */
     {
         unsigned k;

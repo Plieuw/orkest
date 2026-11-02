@@ -180,10 +180,10 @@ static void mix_apply(void)
 }
 
 /* --------------------------------------------------------- settings --- */
-#define SET_MAGIC 0x3953524FU    /* "ORS9" (earlier records: what they hold, the rest the defaults) */
+#define SET_MAGIC 0x4153524FU    /* "ORSA" (earlier records: what they hold, the rest the defaults) */
 /* earlier records: their magic, where their check is (what they hold before it) */
 static const struct { uint32_t magic; uint8_t check; } OLD_SET[] = {
-    {0x3853524FU, 52}, {0x3753524FU, 48}, {0x3653524FU, 32}, {0x3553524FU, 28}, {0x3453524FU, 20}, {0x3353524FU, 20}};
+    {0x3953524FU, 44}, {0x3853524FU, 52}, {0x3753524FU, 48}, {0x3653524FU, 32}, {0x3553524FU, 28}, {0x3453524FU, 20}, {0x3353524FU, 20}};
 struct settings {
     uint32_t magic;
     uint8_t patch, attack, release, reverb;
@@ -199,7 +199,8 @@ struct settings {
     int8_t p1_oct;
     uint8_t p1_velo, p1_depth, p1_human;
     uint8_t pan;                              /* bit 7 pan_mode, bits 0..6 pan_spread */
-    uint8_t mix50, unused2;                   /* HOME's mix ^ 50 (0 in older records: 50/50) */
+    uint8_t mix50, morph_mode;                /* HOME's mix ^ 50 (0 in older records: 50/50); the morph (0: off) */
+    uint8_t morph_a, morph_d, morph_curve, pad;   /* from ORSA */
     uint32_t check;
 };
 /* the LFO's note values in TEMPO: MIDI clock ticks a cycle (24 a quarter note) */
@@ -254,7 +255,7 @@ static void part_load(unsigned p, uint8_t patch, uint8_t phrase, uint8_t speed, 
 static void settings_load(void)
 {
     struct settings s;
-    uint32_t old, at = 0, ver = 9, i;          /* ver: the record's ORS number */
+    uint32_t old, at = 0, ver = 10, i;         /* ver: the record's ORS number (ORSA: 10) */
     if (!fm1_flash_size() || fm1_flash_read(set_offset(), &s, sizeof s) != FM1_FLASH_OK)
         return;
     if (s.magic == SET_MAGIC)
@@ -262,7 +263,7 @@ static void settings_load(void)
     for (i = 0; !at && i < sizeof OLD_SET / sizeof OLD_SET[0]; i++)
         if (s.magic == OLD_SET[i].magic) {
             at = OLD_SET[i].check;
-            ver = 8u - i;
+            ver = 9u - i;
         }
     if (!at)
         return;
@@ -299,6 +300,12 @@ static void settings_load(void)
         mix = (uint8_t)(s.mix50 ^ 50u);
         mix = mix > 100u ? 50u : mix;
     }
+    if (ver >= 10u) {
+        ork_set.morph_mode = s.morph_mode <= 2u ? s.morph_mode : 0u;
+        ork_set.morph_a = s.morph_a < ORK_NMORPH ? s.morph_a : 6u;
+        ork_set.morph_d = s.morph_d < ORK_NMORPH ? s.morph_d : 6u;
+        ork_set.morph_curve = s.morph_curve & 3u;
+    }
     if (ver < 5u)                                    /* (before the parts: the sound saved) */
         ork_set.part[0].patch = ork_set.patch;
     ork_set.patch = ork_set.part[0].patch;           /* layer 1 is HOME's sound */
@@ -334,6 +341,10 @@ static int settings_save(void)
     s.p1_velo = p1->velo, s.p1_depth = p1->depth, s.p1_human = p1->human;
     s.pan = (uint8_t)((ork_set.pan_mode ? 128u : 0u) | (ork_set.pan_spread & 127u));
     s.mix50 = (uint8_t)(mix ^ 50u);
+    s.morph_mode = ork_set.morph_mode;
+    s.morph_a = ork_set.morph_a;
+    s.morph_d = ork_set.morph_d;
+    s.morph_curve = ork_set.morph_curve;
     s.check = set_check(&s, offsetof(struct settings, check));
     if (!fm1_flash_size() || fm1_flash_erase(set_offset()) != FM1_FLASH_OK)
         return -1;
@@ -364,6 +375,9 @@ static uint32_t prev_keys, blocked_keys, prev_buttons, led_shown, event_until, s
 static uint8_t lfo_menu;           /* the LFO menu is open: the knobs set the LFO */
 static uint8_t arp_menu;           /* the ARP menu's page: 1 part 1, 2 its velocity, 3 part 2, 4 its velocity (0 closed) */
 static uint8_t scale_menu;         /* the SCL menu is open: the ARP's scale */
+static uint8_t morph_menu;         /* the SEQ menu is open: the morph from layer 1 to layer 2 and back */
+static const char *const MORPH_LEN[ORK_NMORPH] = {"0", "1/16", "1/8", "1 BEAT", "2 BEATS", "3 BEATS", "1 BAR", "6 BEATS",
+                                                 "2 BARS", "3 BARS", "4 BARS", "8 BARS"};
 static uint8_t scale_dirty;        /* changed, not yet stored: when the menu closes, or 5 s after the last turn */
 static uint32_t scale_turned;
 static uint8_t pan_menu;           /* the GLO menu is open: panning */
@@ -551,6 +565,19 @@ static void draw(uint32_t now)
         knob_row(L_K2, "K2 SCALE", SCALE_NAME[sc], TEXT);
         knob_row(L_K3, "", "", TEXT);
         knob_row(L_K4, "", "", TEXT);
+    } else if (morph_menu) {                        /* the SEQ menu: the morph, and where it is now */
+        static const char *const MODE[3] = {"OFF", "ONCE", "LOOP"}, *const CURVE[4] = {"LINEAR", "SLOW", "FAST", "S"};
+        unsigned k, at = ork_stat.morph * 12u / 255u;
+        line(L_SOUND, ork_set.morph_mode ? "MORPH" : "MORPH OFF", ork_set.morph_mode ? ACCENT : DIM);
+        p = put_str(b, "1 ");
+        for (k = 0; k < 12u; k++)                   /* 1 ----#------ 2 */
+            *p++ = k == at ? '#' : '-';
+        put_str(p, " 2");
+        line(L_NOTE, b, ork_set.morph_mode ? TEXT : DIM);
+        knob_row(L_K1, "K1 ATTACK", MORPH_LEN[ork_set.morph_a % ORK_NMORPH], TEXT);
+        knob_row(L_K2, "K2 DECAY", MORPH_LEN[ork_set.morph_d % ORK_NMORPH], TEXT);
+        knob_row(L_K3, "K3 CURVE", CURVE[ork_set.morph_curve & 3u], TEXT);
+        knob_row(L_K4, "K4 MODE", MODE[ork_set.morph_mode % 3u], TEXT);
     } else if (pan_menu) {                          /* the GLO menu: panning, the sound's layers where they sit */
         static const uint8_t ROW[2] = {L_K3, L_K4};
         const ork_patch_t *pt = ork_bank.np ? &ork_bank.patch[ork_set.patch % ork_bank.np] : 0;
@@ -615,7 +642,7 @@ static void draw(uint32_t now)
         knob_row(L_K4, "K4 ROOM", v, TEXT);
     }
     line(L_EVENT, (int32_t)(now - event_until) < 0 ? event : lfo_menu ? "SELECT SYNC  ALGO BPM  LFO BACK"
-         : pan_menu ? "GLO OR HOME BACK" : env_menu ? "ENV OR HOME BACK" : arp_menu ? arp_hint()
+         : morph_menu ? "LAYER 1 TO 2 AND BACK  SEQ BACK" : pan_menu ? "GLO OR HOME BACK" : env_menu ? "ENV OR HOME BACK" : arp_menu ? arp_hint()
          : scale_menu ? "THE ARP KEEPS TO IT   SCL BACK" : "",
          (int32_t)(now - event_until) < 0 ? AMBER : DIM);
     p = put_str(b, "VOICES ");
@@ -692,8 +719,9 @@ void groove_screen_control(void)
             octave = octave < -3 ? -3 : octave > 3 ? 3 : octave;
         } else if (k == B_SAVE)
             say(settings_save() == 0 ? "SAVED" : "SAVE FAILED", now);
-        else if (k == B_LFO || k == B_ENV || k == B_ARP || k == B_SCL || k == B_GLO ||
-                 (k == B_HOME && (lfo_menu || env_menu || arp_menu || scale_menu || pan_menu))) {
+        else if (k == B_LFO || k == B_ENV || k == B_ARP || k == B_SCL || k == B_GLO || k == B_SEQ ||
+                 (k == B_HOME && (lfo_menu || env_menu || arp_menu || scale_menu || pan_menu || morph_menu))) {
+            morph_menu = k == B_SEQ ? !morph_menu : 0;
             pan_menu = k == B_GLO ? !pan_menu : 0;
             lfo_menu = k == B_LFO ? !lfo_menu : 0;
             env_menu = k == B_ENV ? !env_menu : 0;
@@ -802,6 +830,22 @@ void groove_screen_control(void)
             v = (int)ork_set.scale + c.encoders[E_K2] + c.encoders[E_PRESETS];
             ork_set.scale = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NSCALE ? (int)ORK_NSCALE - 1 : v);
         }
+    } else if (morph_menu) {                        /* K1 attack, K2 decay, K3 curve, K4 mode */
+        int v;
+        if (c.encoders[E_K1]) {
+            v = (int)ork_set.morph_a + (c.encoders[E_K1] > 0 ? 1 : -1);
+            ork_set.morph_a = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NMORPH ? (int)ORK_NMORPH - 1 : v);
+        }
+        if (c.encoders[E_K2]) {
+            v = (int)ork_set.morph_d + (c.encoders[E_K2] > 0 ? 1 : -1);
+            ork_set.morph_d = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NMORPH ? (int)ORK_NMORPH - 1 : v);
+        }
+        if (c.encoders[E_K3])
+            ork_set.morph_curve = (uint8_t)((ork_set.morph_curve + (c.encoders[E_K3] > 0 ? 1u : 3u)) & 3u);
+        if (c.encoders[E_K4]) {
+            v = (int)ork_set.morph_mode + (c.encoders[E_K4] > 0 ? 1 : -1);
+            ork_set.morph_mode = (uint8_t)(v < 0 ? 0 : v > 2 ? 2 : v);
+        }
     } else if (pan_menu) {                          /* K1 the spread, K2 concert seating / the sound's own, K3 room */
         int v;
         if (c.encoders[E_K3]) {
@@ -839,7 +883,7 @@ void groove_screen_control(void)
         if ((d = c.encoders[E_K4]) != 0)
             ork_set.reverb = (uint8_t)(ork_set.reverb + d < 0 ? 0 : ork_set.reverb + d > 127 ? 127 : ork_set.reverb + d);
     }
-    if (!lfo_menu && !env_menu && !arp_menu && !scale_menu && !pan_menu && (c.encoders[E_SELECT] || c.encoders[E_ALGO]))
+    if (!lfo_menu && !env_menu && !arp_menu && !scale_menu && !pan_menu && !morph_menu && (c.encoders[E_SELECT] || c.encoders[E_ALGO]))
         say(c.encoders[E_SELECT] ? "SELECT" : "ALGORITHM", now);
     if (scale_dirty && now - scale_turned >= 5000u) {   /* the scale kept, also with the menu left open */
         scale_dirty = 0;
@@ -851,6 +895,13 @@ void groove_screen_control(void)
         ork_set.master = (uint8_t)(master_adc * 127u / 1023u);
     }
     leds();
+    {   /* SEQ: lit while the morph is on */
+        static int8_t seq_shown = -1;
+        if (seq_shown != (ork_set.morph_mode != 0u)) {
+            seq_shown = (int8_t)(ork_set.morph_mode != 0u);
+            fm1_led_set(B_SEQ, seq_shown);
+        }
+    }
     {   /* SCL: lit while a scale is chosen */
         static int8_t scl_shown = -1;
         if (scl_shown != (ork_set.scale != 0u)) {
