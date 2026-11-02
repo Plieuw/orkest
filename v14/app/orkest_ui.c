@@ -200,7 +200,7 @@ struct settings {
     uint8_t p1_velo, p1_depth, p1_human;
     uint8_t pan;                              /* bit 7 pan_mode, bits 0..6 pan_spread */
     uint8_t mix50, morph_mode;                /* HOME's mix ^ 50 (0 in older records: 50/50); the morph (0: off) */
-    uint8_t morph_a, morph_d, morph_curve, pad;   /* from ORSA */
+    uint8_t morph_len, morph_skew, morph_curve, morph_height100;   /* from ORSA (height ^ 100) */
     uint32_t check;
 };
 /* the LFO's note values in TEMPO: MIDI clock ticks a cycle (24 a quarter note) */
@@ -302,8 +302,9 @@ static void settings_load(void)
     }
     if (ver >= 10u) {
         ork_set.morph_mode = s.morph_mode <= 2u ? s.morph_mode : 0u;
-        ork_set.morph_a = s.morph_a < ORK_NMORPH ? s.morph_a : 6u;
-        ork_set.morph_d = s.morph_d < ORK_NMORPH ? s.morph_d : 6u;
+        ork_set.morph_len = s.morph_len < ORK_NMORPH ? s.morph_len : 7u;
+        ork_set.morph_skew = s.morph_skew <= 100u ? s.morph_skew : 50u;
+        ork_set.morph_height = (uint8_t)(s.morph_height100 ^ 100u) <= 100u ? (uint8_t)(s.morph_height100 ^ 100u) : 100u;
         ork_set.morph_curve = s.morph_curve & 3u;
     }
     if (ver < 5u)                                    /* (before the parts: the sound saved) */
@@ -342,8 +343,9 @@ static int settings_save(void)
     s.pan = (uint8_t)((ork_set.pan_mode ? 128u : 0u) | (ork_set.pan_spread & 127u));
     s.mix50 = (uint8_t)(mix ^ 50u);
     s.morph_mode = ork_set.morph_mode;
-    s.morph_a = ork_set.morph_a;
-    s.morph_d = ork_set.morph_d;
+    s.morph_len = ork_set.morph_len;
+    s.morph_skew = ork_set.morph_skew;
+    s.morph_height100 = (uint8_t)(ork_set.morph_height ^ 100u);
     s.morph_curve = ork_set.morph_curve;
     s.check = set_check(&s, offsetof(struct settings, check));
     if (!fm1_flash_size() || fm1_flash_erase(set_offset()) != FM1_FLASH_OK)
@@ -376,8 +378,8 @@ static uint8_t lfo_menu;           /* the LFO menu is open: the knobs set the LF
 static uint8_t arp_menu;           /* the ARP menu's page: 1 part 1, 2 its velocity, 3 part 2, 4 its velocity (0 closed) */
 static uint8_t scale_menu;         /* the SCL menu is open: the ARP's scale */
 static uint8_t morph_menu;         /* the SEQ menu is open: the morph from layer 1 to layer 2 and back */
-static const char *const MORPH_LEN[ORK_NMORPH] = {"0", "1/16", "1/8", "1 BEAT", "2 BEATS", "3 BEATS", "1 BAR", "6 BEATS",
-                                                 "2 BARS", "3 BARS", "4 BARS", "8 BARS"};
+static const char *const MORPH_LEN[ORK_NMORPH] = {"1/16", "1/8", "1 BEAT", "2 BEATS", "3 BEATS", "1 BAR", "6 BEATS",
+                                                 "2 BARS", "3 BARS", "4 BARS", "8 BARS", "16 BARS"};
 static uint8_t scale_dirty;        /* changed, not yet stored: when the menu closes, or 5 s after the last turn */
 static uint32_t scale_turned;
 static uint8_t pan_menu;           /* the GLO menu is open: panning */
@@ -568,18 +570,21 @@ static void draw(uint32_t now)
     } else if (morph_menu) {                        /* the SEQ menu: the morph, and where it is now */
         static const char *const MODE[3] = {"OFF", "ONCE", "LOOP"}, *const CURVE[4] = {"LINEAR", "SLOW", "FAST", "S"};
         unsigned k, at = ork_stat.morph * 12u / 255u;
-        line(L_SOUND, ork_set.morph_mode ? "MORPH" : "MORPH OFF", ork_set.morph_mode ? ACCENT : DIM);
         p = put_str(b, "1 ");
         for (k = 0; k < 12u; k++)                   /* 1 ----#------ 2 */
             *p++ = k == at ? '#' : '-';
         put_str(p, " 2");
         line(L_NOTE, b, ork_set.morph_mode ? TEXT : DIM);
-        knob_row(L_K1, "K1 ATTACK", MORPH_LEN[ork_set.morph_a % ORK_NMORPH], TEXT);
-        knob_row(L_K2, "K2 DECAY", MORPH_LEN[ork_set.morph_d % ORK_NMORPH], TEXT);
-        knob_row(L_K3, "K3 CURVE", CURVE[ork_set.morph_curve & 3u], TEXT);
-        knob_row(L_K4, "K4 MODE", MODE[ork_set.morph_mode % 3u], TEXT);
+        line(L_SOUND, ork_set.morph_mode ? (ork_set.morph_mode == 2u ? "MORPH LOOP" : "MORPH ONCE") : "MORPH OFF",
+             ork_set.morph_mode ? ACCENT : DIM);
+        (void)MODE;
+        knob_row(L_K1, "K1 LENGTH", MORPH_LEN[ork_set.morph_len % ORK_NMORPH], TEXT);
+        put_str(put_int(v, ork_set.morph_skew), " %");
+        knob_row(L_K2, "K2 SKEW", v, TEXT);
+        put_str(put_int(v, ork_set.morph_height), " %");
+        knob_row(L_K3, "K3 HEIGHT", v, TEXT);
+        knob_row(L_K4, "K4 CURVE", CURVE[ork_set.morph_curve & 3u], TEXT);
     } else if (pan_menu) {                          /* the GLO menu: panning, the sound's layers where they sit */
-        static const uint8_t ROW[2] = {L_K3, L_K4};
         const ork_patch_t *pt = ork_bank.np ? &ork_bank.patch[ork_set.patch % ork_bank.np] : 0;
         unsigned k;
         line(L_SOUND, "PANNING", ACCENT);
@@ -642,7 +647,7 @@ static void draw(uint32_t now)
         knob_row(L_K4, "K4 ROOM", v, TEXT);
     }
     line(L_EVENT, (int32_t)(now - event_until) < 0 ? event : lfo_menu ? "SELECT SYNC  ALGO BPM  LFO BACK"
-         : morph_menu ? "PHRASE 1 TO 2 AND BACK  SEQ BACK" : pan_menu ? "GLO OR HOME BACK" : env_menu ? "ENV OR HOME BACK" : arp_menu ? arp_hint()
+         : morph_menu ? "SELECT OFF ONCE LOOP  SEQ BACK" : pan_menu ? "GLO OR HOME BACK" : env_menu ? "ENV OR HOME BACK" : arp_menu ? arp_hint()
          : scale_menu ? "THE ARP KEEPS TO IT   SCL BACK" : "",
          (int32_t)(now - event_until) < 0 ? AMBER : DIM);
     p = put_str(b, "VOICES ");
@@ -831,20 +836,24 @@ void groove_screen_control(void)
             v = (int)ork_set.scale + c.encoders[E_K2] + c.encoders[E_PRESETS];
             ork_set.scale = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NSCALE ? (int)ORK_NSCALE - 1 : v);
         }
-    } else if (morph_menu) {                        /* K1 attack, K2 decay, K3 curve, K4 mode */
+    } else if (morph_menu) {                        /* K1 length, K2 skew, K3 height, K4 curve, SELECT mode */
         int v;
         if (c.encoders[E_K1]) {
-            v = (int)ork_set.morph_a + (c.encoders[E_K1] > 0 ? 1 : -1);
-            ork_set.morph_a = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NMORPH ? (int)ORK_NMORPH - 1 : v);
+            v = (int)ork_set.morph_len + (c.encoders[E_K1] > 0 ? 1 : -1);
+            ork_set.morph_len = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NMORPH ? (int)ORK_NMORPH - 1 : v);
         }
         if (c.encoders[E_K2]) {
-            v = (int)ork_set.morph_d + (c.encoders[E_K2] > 0 ? 1 : -1);
-            ork_set.morph_d = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NMORPH ? (int)ORK_NMORPH - 1 : v);
+            v = (int)ork_set.morph_skew + c.encoders[E_K2] * 5;
+            ork_set.morph_skew = (uint8_t)(v < 0 ? 0 : v > 100 ? 100 : v);
         }
-        if (c.encoders[E_K3])
-            ork_set.morph_curve = (uint8_t)((ork_set.morph_curve + (c.encoders[E_K3] > 0 ? 1u : 3u)) & 3u);
-        if (c.encoders[E_K4]) {
-            v = (int)ork_set.morph_mode + (c.encoders[E_K4] > 0 ? 1 : -1);
+        if (c.encoders[E_K3]) {
+            v = (int)ork_set.morph_height + c.encoders[E_K3] * 5;
+            ork_set.morph_height = (uint8_t)(v < 0 ? 0 : v > 100 ? 100 : v);
+        }
+        if (c.encoders[E_K4])
+            ork_set.morph_curve = (uint8_t)((ork_set.morph_curve + (c.encoders[E_K4] > 0 ? 1u : 3u)) & 3u);
+        if (c.encoders[E_SELECT]) {
+            v = (int)ork_set.morph_mode + (c.encoders[E_SELECT] > 0 ? 1 : -1);
             ork_set.morph_mode = (uint8_t)(v < 0 ? 0 : v > 2 ? 2 : v);
         }
     } else if (pan_menu) {                          /* K1 the spread, K2 concert seating / the sound's own, K3 room */

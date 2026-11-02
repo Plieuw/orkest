@@ -70,7 +70,7 @@ static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
 struct ork_settings ork_set = {0, 8, 3, 40, 100, 1, 92, 40, 12, 8, 0, 0, 1, 8, 64, 64, 0, 0, 0, 0,
-                               {{0, 0, 1, 90, 0, 0, 100, 0, 100}, {255, 39, 1, 90, 1, 0, 100, 0, 100}}, 0, 100, 0, 6, 6, 3, 9131};
+                               {{0, 0, 1, 90, 0, 0, 100, 0, 100}, {255, 39, 1, 90, 1, 0, 100, 0, 100}}, 0, 100, 0, 7, 50, 3, 100, 9131};
 struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0, 0};
 
 /* ------------------------------------------------------------ events --- */
@@ -444,24 +444,24 @@ static int32_t morph_x;                          /* the envelope: 0 part 1 .. 32
 static FM1_AUDIO_CODE void morph_start(void) { morph_pos = 0; }
 static FM1_AUDIO_CODE void morph_block(uint32_t beat_inc)
 {
-    uint32_t a, d, t;
+    uint32_t len, top, t;
     int32_t x;
     if (!ork_set.morph_mode) {
         morph_x = 0;
         ork_stat.morph = 0;
         return;
     }
-    a = (uint32_t)MORPH_TICKS[ork_set.morph_a % ORK_NMORPH] << 16;
-    d = (uint32_t)MORPH_TICKS[ork_set.morph_d % ORK_NMORPH] << 16;
-    if (ork_set.morph_mode == 2u && a + d && morph_pos >= a + d)
-        morph_pos -= a + d;                      /* looping */
+    len = (uint32_t)MORPH_TICKS[ork_set.morph_len % ORK_NMORPH] << 16;
+    top = (uint32_t)(((uint64_t)len * (ork_set.morph_skew > 100u ? 100u : ork_set.morph_skew)) / 100u);
+    if (ork_set.morph_mode == 2u && morph_pos >= len)
+        morph_pos -= len;                        /* looping */
     t = morph_pos;
-    if (t < a)
-        x = (int32_t)(((uint64_t)t << 15) / a);
-    else if (t < a + d)
-        x = 32767 - (int32_t)(((uint64_t)(t - a) << 15) / d);
+    if (t >= len)
+        x = 0;                                   /* once: back at part 1 */
+    else if (t < top)
+        x = (int32_t)(((uint64_t)t << 15) / top);   /* up to the top (skew: where it is) */
     else
-        x = a + d ? 0 : 32767;                   /* once: back at part 1 (no times at all: part 2) */
+        x = 32767 - (int32_t)(((uint64_t)(t - top) << 15) / (len - top));   /* and down */
     x = x < 0 ? 0 : x > 32767 ? 32767 : x;
     switch (ork_set.morph_curve & 3u) {          /* the curve */
     case 1: x = (int32_t)((int64_t)x * x >> 15); break;                                   /* slow start */
@@ -469,6 +469,7 @@ static FM1_AUDIO_CODE void morph_block(uint32_t beat_inc)
     case 3: x = (int32_t)(((int64_t)x * x >> 15) * (98304 - 2 * x) >> 15); break;          /* S: 3x^2 - 2x^3 */
     default: break;
     }
+    x = x * (int32_t)(ork_set.morph_height > 100u ? 100u : ork_set.morph_height) / 100;   /* the height */
     morph_x = x < 0 ? 0 : x > 32767 ? 32767 : x;
     ork_stat.morph = (uint8_t)(morph_x >> 7);
     morph_pos += beat_inc;
