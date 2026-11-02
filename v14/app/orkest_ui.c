@@ -185,7 +185,7 @@ struct settings {
     int8_t p1_oct;
     uint8_t p1_velo, p1_depth, p1_human;
     uint8_t pan;                              /* bit 7 pan_mode, bits 0..6 pan_spread */
-    uint8_t pad[2];
+    uint8_t level0, level1;                   /* the layers' volumes ^ 100 (0 in older records: 100) */
     uint32_t check;
 };
 /* the LFO's note values in TEMPO: MIDI clock ticks a cycle (24 a quarter note) */
@@ -282,7 +282,12 @@ static void settings_load(void)
         part_load(1, s.p1_patch, s.p1_phrase, s.p1_speed, s.p1_gate, s.p1_oct, s.p1_velo, s.p1_depth, s.p1_human);
         ork_set.pan_mode = s.pan >> 7;
         ork_set.pan_spread = s.pan & 127u;
+        ork_set.part[0].level = (uint8_t)((s.level0 ^ 100u) & 127u);
+        ork_set.part[1].level = (uint8_t)((s.level1 ^ 100u) & 127u);
     }
+    if (ver < 5u)                                    /* (before the parts: the sound saved) */
+        ork_set.part[0].patch = ork_set.patch;
+    ork_set.patch = ork_set.part[0].patch;           /* layer 1 is HOME's sound */
 }
 static int settings_save(void)
 {
@@ -314,6 +319,8 @@ static int settings_save(void)
     s.p1_patch = p1->patch, s.p1_phrase = p1->phrase, s.p1_speed = p1->speed, s.p1_gate = p1->gate, s.p1_oct = p1->oct;
     s.p1_velo = p1->velo, s.p1_depth = p1->depth, s.p1_human = p1->human;
     s.pan = (uint8_t)((ork_set.pan_mode ? 128u : 0u) | (ork_set.pan_spread & 127u));
+    s.level0 = (uint8_t)(ork_set.part[0].level ^ 100u);
+    s.level1 = (uint8_t)(ork_set.part[1].level ^ 100u);
     s.check = set_check(&s, offsetof(struct settings, check));
     if (!fm1_flash_size() || fm1_flash_erase(set_offset()) != FM1_FLASH_OK)
         return -1;
@@ -366,7 +373,8 @@ static void patch_select(int to)
         return;
     to = to < 0 ? 0 : to >= (int)ork_bank.np ? (int)ork_bank.np - 1 : to;
     p = &ork_bank.patch[to];
-    ork_set.patch = (uint8_t)to;
+    ork_set.patch = (uint8_t)to;                    /* layer 1: HOME's sound and ARP part 1's are one */
+    ork_set.part[0].patch = (uint8_t)to;
     ork_set.attack = p->attack;
     ork_set.release = p->release;
 }
@@ -539,23 +547,11 @@ static void draw(uint32_t now)
         put_str(put_int(v, ork_set.pan_spread), " %");
         knob_row(L_K1, "K1 SPREAD", v, TEXT);
         knob_row(L_K2, "K2 SEATS", ork_set.pan_mode ? "SOUND" : "CONCERT", TEXT);
-        for (k = 0; k < 2u; k++) {                  /* the current sound's first two layers */
-            if (pt && k < pt->nl && pt->l[k].inst < ork_bank.ni) {
-                const char *nm = ork_bank.inst[pt->l[k].inst].name;
-                int32_t pn = (ork_set.pan_mode ? pt->l[k].pan : seat_pan(nm)) * (int32_t)ork_set.pan_spread / 100;
-                pn = pn < -64 ? -64 : pn > 63 ? 63 : pn;
-                p = v;
-                if (pn)
-                    p = put_str(p, pn < 0 ? "L" : "R");
-                put_int(p, pn < 0 ? -pn * 100 / 64 : pn * 100 / 63);
-                if (!pn)
-                    put_str(v, "C");
-                strncpy(b, nm, 12);
-                b[12] = 0;
-                knob_row(ROW[k], b, v, DIM);
-            } else
-                knob_row(ROW[k], "", "", DIM);
-        }
+        put_int(v, ork_set.reverb);
+        knob_row(L_K3, "K3 ROOM", v, TEXT);
+        (void)pt;
+        (void)k;
+        knob_row(L_K4, "", "", TEXT);
     } else if (env_menu) {                          /* the ENV menu: the envelope and the three parts */
         line(L_SOUND, "ENVELOPE", ACCENT);
         line(L_NOTE, "64 AS RECORDED", DIM);
@@ -591,16 +587,16 @@ static void draw(uint32_t now)
         if (ork_set.arp_on)
             put_str(p, "   ARP");
         line(L_NOTE, b, TEXT);
-        p = put_int(v, ork_set.patch + 1);
+        p = put_int(v, ork_set.patch + 1);           /* the two layers: sound and volume each */
         p = put_str(p, "/");
         put_int(p, ork_bank.np);
-        knob_row(L_K1, "K1 SOUND", v, TEXT);
-        put_int(v, ork_set.attack);
-        knob_row(L_K2, "K2 ATTACK", v, TEXT);
-        put_int(v, ork_set.release);
-        knob_row(L_K3, "K3 RELEASE", v, TEXT);
-        put_int(v, ork_set.reverb);
-        knob_row(L_K4, "K4 ROOM", v, TEXT);
+        knob_row(L_K1, "K1 SOUND 1", v, TEXT);
+        put_int(v, ork_set.part[0].level);
+        knob_row(L_K2, "K2 VOLUME 1", v, TEXT);
+        knob_row(L_K3, "K3", ork_set.part[1].patch < ork_bank.np ? ork_bank.patch[ork_set.part[1].patch].name
+                 : "NO LAYER 2", ork_set.part[1].patch < ork_bank.np ? ACCENT : DIM);
+        put_int(v, ork_set.part[1].level);
+        knob_row(L_K4, "K4 VOLUME 2", v, ork_set.part[1].patch < ork_bank.np ? TEXT : DIM);
     }
     line(L_EVENT, (int32_t)(now - event_until) < 0 ? event : lfo_menu ? "SELECT SYNC  ALGO BPM  LFO BACK"
          : pan_menu ? "GLO OR HOME BACK" : env_menu ? "ENV OR HOME BACK" : arp_menu ? arp_hint()
@@ -758,6 +754,8 @@ void groove_screen_control(void)
                 v = cur + e[0];
                 v = v < lo ? lo : v >= (int)ork_bank.np ? (int)ork_bank.np - 1 : v;
                 pt->patch = (uint8_t)(v < 0 ? 255 : v);
+                if (arp_menu < 3u)
+                    patch_select(v);                /* part 1 is layer 1: HOME's sound (its attack, release) */
             }
             if (e[1]) {
                 v = (int)pt->phrase + e[1];
@@ -786,8 +784,12 @@ void groove_screen_control(void)
             v = (int)ork_set.scale + c.encoders[E_K2] + c.encoders[E_PRESETS];
             ork_set.scale = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NSCALE ? (int)ORK_NSCALE - 1 : v);
         }
-    } else if (pan_menu) {                          /* K1 the spread, K2 concert seating / the sound's own */
+    } else if (pan_menu) {                          /* K1 the spread, K2 concert seating / the sound's own, K3 room */
         int v;
+        if (c.encoders[E_K3]) {
+            v = (int)ork_set.reverb + c.encoders[E_K3];
+            ork_set.reverb = (uint8_t)(v < 0 ? 0 : v > 127 ? 127 : v);
+        }
         if (c.encoders[E_K1]) {
             v = (int)ork_set.pan_spread + c.encoders[E_K1] * 5;
             ork_set.pan_spread = (uint8_t)(v < 0 ? 0 : v > 125 ? 125 : v);
@@ -805,12 +807,19 @@ void groove_screen_control(void)
     } else if (ork_bank_state() == ORK_BANK_OK) {
         if ((d = c.encoders[E_K1] + c.encoders[E_PRESETS]) != 0)
             patch_select(ork_set.patch + d);
-        if ((d = c.encoders[E_K2]) != 0)
-            ork_set.attack = (uint8_t)(ork_set.attack + d < 0 ? 0 : ork_set.attack + d > 127 ? 127 : ork_set.attack + d);
-        if ((d = c.encoders[E_K3]) != 0)
-            ork_set.release = (uint8_t)(ork_set.release + d < 0 ? 0 : ork_set.release + d > 127 ? 127 : ork_set.release + d);
-        if ((d = c.encoders[E_K4]) != 0)
-            ork_set.reverb = (uint8_t)(ork_set.reverb + d < 0 ? 0 : ork_set.reverb + d > 127 ? 127 : ork_set.reverb + d);
+        if ((d = c.encoders[E_K2]) != 0) {          /* layer 1's volume */
+            int lv = (int)ork_set.part[0].level + d;
+            ork_set.part[0].level = (uint8_t)(lv < 0 ? 0 : lv > 127 ? 127 : lv);
+        }
+        if ((d = c.encoders[E_K3]) != 0) {          /* layer 2's sound (OFF below the first) */
+            int cur = ork_set.part[1].patch < ork_bank.np ? (int)ork_set.part[1].patch : -1, nv = cur + d;
+            nv = nv < -1 ? -1 : nv >= (int)ork_bank.np ? (int)ork_bank.np - 1 : nv;
+            ork_set.part[1].patch = (uint8_t)(nv < 0 ? 255 : nv);
+        }
+        if ((d = c.encoders[E_K4]) != 0) {          /* layer 2's volume */
+            int lv = (int)ork_set.part[1].level + d;
+            ork_set.part[1].level = (uint8_t)(lv < 0 ? 0 : lv > 127 ? 127 : lv);
+        }
     }
     if (!lfo_menu && !env_menu && !arp_menu && !scale_menu && !pan_menu && (c.encoders[E_SELECT] || c.encoders[E_ALGO]))
         say(c.encoders[E_SELECT] ? "SELECT" : "ALGORITHM", now);

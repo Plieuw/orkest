@@ -69,7 +69,7 @@ static voice_t voice[NVOICE];
 static uint32_t voice_clock;
 
 struct ork_settings ork_set = {0, 8, 3, 40, 100, 1, 92, 40, 12, 8, 0, 0, 1, 8, 64, 64, 0, 0, 0, 0,
-                               {{0, 0, 1, 90, 0, 0, 100, 0}, {255, 39, 1, 90, 1, 0, 100, 0}}, 0, 100, 9131};
+                               {{0, 0, 1, 90, 0, 0, 100, 0, 100}, {255, 39, 1, 90, 1, 0, 100, 0, 100}}, 0, 100, 9131};
 struct ork_status ork_stat = {0, 0xFF, 0, 1, 0, 0};
 
 /* ------------------------------------------------------------ events --- */
@@ -248,6 +248,7 @@ static FM1_AUDIO_CODE int can_slide(const char *name)
     }
     return 0;
 }
+static uint32_t layer_nid;                       /* the second layer of a key: its first layer's note (not ended) */
 #define NPOLY 12                                 /* notes at once (as many as voices); a new one past it ends the oldest */
 static uint32_t note_clock;
 static FM1_AUDIO_CODE void release_voice(voice_t *v, uint32_t time, int tail);
@@ -276,7 +277,7 @@ static FM1_AUDIO_CODE void poly_limit(void)
 }
 /* from: a slide from that note (its pitch gliding to `note` over `glide` blocks), or -1 */
 static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel, uint32_t src, int32_t from,
-                                     uint32_t glide)
+                                     uint32_t glide, uint32_t level)
 {
     const ork_patch_t *p;
     uint32_t i, l, vq = vel * vel * 2u;         /* velocity curve, Q15: 127 -> 32258, 100 -> 20000 */
@@ -286,7 +287,8 @@ static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel
     poly_limit();
     ++note_clock;
     for (i = 0; i < NVOICE; i++)                /* the same note again: the old one fades as the new one starts */
-        if (voice[i].note == note && voice[i].src == src && (voice[i].stage == ST_ATTACK || voice[i].stage == ST_SUSTAIN)) {
+        if (voice[i].note == note && voice[i].src == src && voice[i].nid != layer_nid &&
+            (voice[i].stage == ST_ATTACK || voice[i].stage == ST_SUSTAIN)) {
             voice[i].stage = ST_RELEASE;
             voice[i].estep = env_step(ork_set.release);
         }
@@ -343,7 +345,7 @@ static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel
         v->nid = note_clock;
         v->n2 = (uint8_t)n2;
         v->age = ++voice_clock;
-        g = (((vq * ly->gain) >> 8) * in->gain) >> 8;
+        g = (((((vq * ly->gain) >> 8) * in->gain) >> 8) * level) / 100u;   /* the layer's volume */
         if (g > 32767u)
             g = 32767u;
         {   /* the place: the concert seating or the sound's own, times the spread; 0..127, 64 = centre */
@@ -361,7 +363,18 @@ static FM1_AUDIO_CODE void note_on_p(uint32_t patch, uint32_t note, uint32_t vel
     ork_stat.last_note = (uint8_t)note;
     ork_stat.last_vel = (uint8_t)vel;
 }
-static FM1_AUDIO_CODE void note_on(uint32_t note, uint32_t vel) { note_on_p(ork_set.patch, note, vel, 0, -1, 0); }
+/* a key without ARP: both layers (the second when it has a sound), each at its volume */
+static FM1_AUDIO_CODE void note_on(uint32_t note, uint32_t vel)
+{
+    uint32_t p;
+    layer_nid = 0;
+    for (p = 0; p < 2u; p++)
+        if (ork_set.part[p].patch < ork_bank.np && ork_set.part[p].level) {
+            note_on_p(ork_set.part[p].patch, note, vel, 0, -1, 0, ork_set.part[p].level);
+            layer_nid = note_clock;              /* (the layer just started: the second keeps it) */
+        }
+    layer_nid = 0;
+}
 /* note off: the sustain releases over the release time; the instrument's release sample (TAIL) takes over */
 static FM1_AUDIO_CODE void release_voice(voice_t *v, uint32_t time, int tail)
 {
@@ -588,7 +601,8 @@ static FM1_AUDIO_CODE void phrases(void)
                 run_quiet(r);                    /* one note at a time */
                 {   /* a slide: over half the note (in blocks at this tempo), at least ~12 ms */
                     uint32_t gl = e->slide && r->prev >= 0 && inc ? ((uint32_t)e->len << 15) / inc : 0u;
-                    note_on_p(r->patch, (uint32_t)n, vel, i + 1u, e->slide ? r->prev : -1, gl < 4u && gl ? 4u : gl);
+                    note_on_p(r->patch, (uint32_t)n, vel, i + 1u, e->slide ? r->prev : -1, gl < 4u && gl ? 4u : gl,
+                              pt->level);
                 }
                 }
                 r->prev = (int16_t)n;

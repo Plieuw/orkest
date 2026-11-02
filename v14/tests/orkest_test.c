@@ -538,6 +538,29 @@ int main(int argc, char **argv)
         ork_set.pan_spread = 100;
     }
 
+    /* ---- two layers on a key (ARP off): FLUTE + OBOE, two voices; layer 2's volume 0: one; half the volume: quieter */
+    {
+        unsigned most, b, w;
+        double e[2] = {0, 0};
+        use(patch_of("FLUTE"));
+        ork_set.part[1].patch = (uint8_t)patch_of("OBOE");
+        note(0x90, 72, 100); render(200); most = ork_stat.voices; note(0x80, 72, 0); render(2500);
+        check("a key, two layers: both sound", most == 2u);
+        ork_set.part[1].level = 0;
+        note(0x90, 72, 100); render(200); most = ork_stat.voices; note(0x80, 72, 0); render(2500);
+        check("... layer 2 at volume 0: one", most == 1u);
+        ork_set.part[1].patch = 255; ork_set.part[1].level = 100;
+        for (w = 0; w < 2u; w++) {
+            ork_set.part[0].level = w ? 50 : 100;
+            note(0x90, 72, 100);
+            for (b = 0; b < 100u; b++) { orkest_render(blk); for (most = 0; most < 256u; most++) e[w] += (double)blk[most] * blk[most]; }
+            note(0x80, 72, 0); render(2500);
+        }
+        printf("  layer 1 at volume 50: %.1f dB\n", 10 * log10(e[1] / e[0]));
+        check("... layer 1 at volume 50: about 6 dB down", 10 * log10(e[1] / e[0]) < -5 && 10 * log10(e[1] / e[0]) > -7);
+        ork_set.part[0].level = 100;
+    }
+
     /* ---- polyphony: 16 notes, last note priority */
     {
         unsigned k;

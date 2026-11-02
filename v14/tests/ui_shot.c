@@ -71,7 +71,7 @@ int main(void){
   ctl.encoders[2] = 1; ctl.encoders[3] = 12; ctl.encoders[6] = 1; groove_screen_control();
   ctl.encoders[2] = ctl.encoders[3] = 0; ctl.encoders[6] = 1; groove_screen_control(); ctl.encoders[6] = 0;
   for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-arp.rgb565");
-  if (!ork_set.arp_on || ork_set.part[0].phrase != 12 || ork_set.part[0].patch != 1 || ork_set.arp_mode != 2 || ork_set.patch != 10) {
+  if (!ork_set.arp_on || ork_set.part[0].phrase != 12 || ork_set.part[0].patch != 11 || ork_set.arp_mode != 2 || ork_set.patch != 11) {
     printf("screen test FAIL: ARP part 1 (%d %d %d %d)\n", ork_set.arp_on, ork_set.part[0].phrase, ork_set.arp_mode, ork_set.patch); return 1; }
   ctl.buttons = 1u << 10; groove_screen_control(); ctl.buttons = 0;   /* ARP: part 1's velocity: K1 pattern +3, K4 gate -10 */
   ctl.encoders[2] = 3; ctl.encoders[5] = -10; groove_screen_control(); ctl.encoders[2] = ctl.encoders[5] = 0;
@@ -79,7 +79,7 @@ int main(void){
   ctl.buttons = 1u << 10; groove_screen_control(); ctl.buttons = 0;   /* ARP: part 2 (off): K1 +4 -> the 4th sound */
   ctl.encoders[2] = 4; groove_screen_control(); ctl.encoders[2] = 0;
   for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-arp-part2.rgb565");
-  if (ork_set.part[0].velo != 3 || ork_set.part[0].gate != 80 || ork_set.part[1].patch != 3) {
+  if (ork_set.part[0].velo != 3 || ork_set.part[0].gate != 80 || ork_set.part[1].patch != 8) {   /* (OFF, +5 on HOME K3 after the ENV test, +4 here) */
     printf("screen test FAIL: ARP pages (%d %d %d)\n", ork_set.part[0].velo, ork_set.part[0].gate, ork_set.part[1].patch); return 1; }
   ctl.buttons = 1u << 8; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* HOME: back, ARP stays on */
   ork_stat.last_note = 69;

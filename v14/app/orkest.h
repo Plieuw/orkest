@@ -107,7 +107,8 @@ struct ork_settings {
     /* SCL: the scale ARP keeps to (orkest_scales.inc, 0 off) and its root (0 C .. 11 B); a phrase's notes outside it
      * move to the nearest note in it (the lower one at a tie) */
     volatile uint8_t scale, scale_root;
-    /* the ARP's two parts, each its own pages: its sound (patch; part 2: 255 off), phrase, speed (0 half, 1 as
+    /* the two layers (HOME) and the ARP's two parts, the same: a key plays both layers, or with ARP each its phrase.
+     * level: its volume (0..127, 100 as the sound is). The ARP pages also set: its sound (patch; part 2: 255 off), phrase, speed (0 half, 1 as
      * written, 2 double), gate (10..100 % of each note), octave (-2..+2); its velocity pattern (orkest_velo.inc, 0 the
      * phrase's own; one step a note played, running on over the phrase's repeats), depth (0..100 %), humanize (0..100:
      * a random +-0..30) */
@@ -115,6 +116,7 @@ struct ork_settings {
         volatile uint8_t patch, phrase, speed, gate;
         volatile int8_t oct;
         volatile uint8_t velo, depth, human;
+        volatile uint8_t level;
     } part[2];
     /* GLO: panning; pan_mode 0 the concert seating (orkest_seats.inc), 1 the sound's own layer pans; pan_spread
      * 0..127 % of it (0: all in the middle) */
