@@ -165,6 +165,20 @@ static void knob_row(unsigned l, const char *label, const char *value, uint16_t 
     line(l, b, colour);
 }
 
+/* HOME's mix of the two layers: layer 2's share (0..100 %), equal power (50/50: each -3 dB); layer 2 off: layer 1 whole */
+static uint8_t mix = 50;
+static void mix_apply(void)
+{
+    uint32_t a = 100u - mix, x, r, b;
+    int two = ork_set.part[1].patch < ork_bank.np;
+    for (b = 0; b < 2u; b++) {                       /* level = 100 sqrt(share / 100) = sqrt(share * 100) */
+        x = (b ? mix : a) * 100u;
+        for (r = 0; (r + 1u) * (r + 1u) <= x; r++)
+            ;
+        ork_set.part[b].level = (uint8_t)(two ? r : b ? 0u : 100u);
+    }
+}
+
 /* --------------------------------------------------------- settings --- */
 #define SET_MAGIC 0x3953524FU    /* "ORS9" (earlier records: what they hold, the rest the defaults) */
 /* earlier records: their magic, where their check is (what they hold before it) */
@@ -185,7 +199,7 @@ struct settings {
     int8_t p1_oct;
     uint8_t p1_velo, p1_depth, p1_human;
     uint8_t pan;                              /* bit 7 pan_mode, bits 0..6 pan_spread */
-    uint8_t level0, level1;                   /* the layers' volumes ^ 100 (0 in older records: 100) */
+    uint8_t mix50, unused2;                   /* HOME's mix ^ 50 (0 in older records: 50/50) */
     uint32_t check;
 };
 /* the LFO's note values in TEMPO: MIDI clock ticks a cycle (24 a quarter note) */
@@ -282,8 +296,8 @@ static void settings_load(void)
         part_load(1, s.p1_patch, s.p1_phrase, s.p1_speed, s.p1_gate, s.p1_oct, s.p1_velo, s.p1_depth, s.p1_human);
         ork_set.pan_mode = s.pan >> 7;
         ork_set.pan_spread = s.pan & 127u;
-        ork_set.part[0].level = (uint8_t)((s.level0 ^ 100u) & 127u);
-        ork_set.part[1].level = (uint8_t)((s.level1 ^ 100u) & 127u);
+        mix = (uint8_t)(s.mix50 ^ 50u);
+        mix = mix > 100u ? 50u : mix;
     }
     if (ver < 5u)                                    /* (before the parts: the sound saved) */
         ork_set.part[0].patch = ork_set.patch;
@@ -319,8 +333,7 @@ static int settings_save(void)
     s.p1_patch = p1->patch, s.p1_phrase = p1->phrase, s.p1_speed = p1->speed, s.p1_gate = p1->gate, s.p1_oct = p1->oct;
     s.p1_velo = p1->velo, s.p1_depth = p1->depth, s.p1_human = p1->human;
     s.pan = (uint8_t)((ork_set.pan_mode ? 128u : 0u) | (ork_set.pan_spread & 127u));
-    s.level0 = (uint8_t)(ork_set.part[0].level ^ 100u);
-    s.level1 = (uint8_t)(ork_set.part[1].level ^ 100u);
+    s.mix50 = (uint8_t)(mix ^ 50u);
     s.check = set_check(&s, offsetof(struct settings, check));
     if (!fm1_flash_size() || fm1_flash_erase(set_offset()) != FM1_FLASH_OK)
         return -1;
@@ -587,16 +600,19 @@ static void draw(uint32_t now)
         if (ork_set.arp_on)
             put_str(p, "   ARP");
         line(L_NOTE, b, TEXT);
-        p = put_int(v, ork_set.patch + 1);           /* the two layers: sound and volume each */
+        p = put_int(v, ork_set.patch + 1);           /* the two layers: their sounds, their mix */
         p = put_str(p, "/");
         put_int(p, ork_bank.np);
         knob_row(L_K1, "K1 SOUND 1", v, TEXT);
-        put_int(v, ork_set.part[0].level);
-        knob_row(L_K2, "K2 VOLUME 1", v, TEXT);
-        knob_row(L_K3, "K3", ork_set.part[1].patch < ork_bank.np ? ork_bank.patch[ork_set.part[1].patch].name
+        knob_row(L_K2, "K2", ork_set.part[1].patch < ork_bank.np ? ork_bank.patch[ork_set.part[1].patch].name
                  : "NO LAYER 2", ork_set.part[1].patch < ork_bank.np ? ACCENT : DIM);
-        put_int(v, ork_set.part[1].level);
-        knob_row(L_K4, "K4 VOLUME 2", v, ork_set.part[1].patch < ork_bank.np ? TEXT : DIM);
+        p = put_int(v, 100 - mix);
+        p = put_str(p, "/");
+        put_int(p, mix);
+        knob_row(L_K3, "K3 MIX", ork_set.part[1].patch < ork_bank.np ? v : "100/0",
+                 ork_set.part[1].patch < ork_bank.np ? TEXT : DIM);
+        put_int(v, ork_set.reverb);
+        knob_row(L_K4, "K4 ROOM", v, TEXT);
     }
     line(L_EVENT, (int32_t)(now - event_until) < 0 ? event : lfo_menu ? "SELECT SYNC  ALGO BPM  LFO BACK"
          : pan_menu ? "GLO OR HOME BACK" : env_menu ? "ENV OR HOME BACK" : arp_menu ? arp_hint()
@@ -625,6 +641,7 @@ void groove_screen_init(void)
     ork_bank_boot();
     if (ork_bank_state() == ORK_BANK_OK && ork_set.patch >= ork_bank.np)
         patch_select(0);
+    mix_apply();
     draw_text(96, 4, 1, "ORKEST", ACCENT);
 #ifdef ORKEST_BUILD
     draw_text(136, 1, 1, ORKEST_BUILD, DIM);
@@ -756,6 +773,7 @@ void groove_screen_control(void)
                 pt->patch = (uint8_t)(v < 0 ? 255 : v);
                 if (arp_menu < 3u)
                     patch_select(v);                /* part 1 is layer 1: HOME's sound (its attack, release) */
+                mix_apply();
             }
             if (e[1]) {
                 v = (int)pt->phrase + e[1];
@@ -807,19 +825,19 @@ void groove_screen_control(void)
     } else if (ork_bank_state() == ORK_BANK_OK) {
         if ((d = c.encoders[E_K1] + c.encoders[E_PRESETS]) != 0)
             patch_select(ork_set.patch + d);
-        if ((d = c.encoders[E_K2]) != 0) {          /* layer 1's volume */
-            int lv = (int)ork_set.part[0].level + d;
-            ork_set.part[0].level = (uint8_t)(lv < 0 ? 0 : lv > 127 ? 127 : lv);
-        }
-        if ((d = c.encoders[E_K3]) != 0) {          /* layer 2's sound (OFF below the first) */
+        if ((d = c.encoders[E_K2]) != 0) {          /* layer 2's sound (OFF below the first) */
             int cur = ork_set.part[1].patch < ork_bank.np ? (int)ork_set.part[1].patch : -1, nv = cur + d;
             nv = nv < -1 ? -1 : nv >= (int)ork_bank.np ? (int)ork_bank.np - 1 : nv;
             ork_set.part[1].patch = (uint8_t)(nv < 0 ? 255 : nv);
+            mix_apply();
         }
-        if ((d = c.encoders[E_K4]) != 0) {          /* layer 2's volume */
-            int lv = (int)ork_set.part[1].level + d;
-            ork_set.part[1].level = (uint8_t)(lv < 0 ? 0 : lv > 127 ? 127 : lv);
+        if ((d = c.encoders[E_K3]) != 0) {          /* the mix: layer 2's share */
+            int m = (int)mix + d;
+            mix = (uint8_t)(m < 0 ? 0 : m > 100 ? 100 : m);
+            mix_apply();
         }
+        if ((d = c.encoders[E_K4]) != 0)
+            ork_set.reverb = (uint8_t)(ork_set.reverb + d < 0 ? 0 : ork_set.reverb + d > 127 ? 127 : ork_set.reverb + d);
     }
     if (!lfo_menu && !env_menu && !arp_menu && !scale_menu && !pan_menu && (c.encoders[E_SELECT] || c.encoders[E_ALGO]))
         say(c.encoders[E_SELECT] ? "SELECT" : "ALGORITHM", now);

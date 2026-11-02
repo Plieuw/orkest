@@ -79,7 +79,7 @@ int main(void){
   ctl.buttons = 1u << 10; groove_screen_control(); ctl.buttons = 0;   /* ARP: part 2 (off): K1 +4 -> the 4th sound */
   ctl.encoders[2] = 4; groove_screen_control(); ctl.encoders[2] = 0;
   for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-arp-part2.rgb565");
-  if (ork_set.part[0].velo != 3 || ork_set.part[0].gate != 80 || ork_set.part[1].patch != 8) {   /* (OFF, +5 on HOME K3 after the ENV test, +4 here) */
+  if (ork_set.part[0].velo != 3 || ork_set.part[0].gate != 80 || ork_set.part[1].patch != 3) {
     printf("screen test FAIL: ARP pages (%d %d %d)\n", ork_set.part[0].velo, ork_set.part[0].gate, ork_set.part[1].patch); return 1; }
   ctl.buttons = 1u << 8; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* HOME: back, ARP stays on */
   ork_stat.last_note = 69;
@@ -96,5 +96,9 @@ ctl.buttons = 1u << 7; groove_screen_control(); ctl.buttons = 0;    /* GLO: pann
   ctl.encoders[2] = -6; groove_screen_control(); ctl.encoders[2] = 0;
   for(int i=0;i<3;i++)groove_screen_control(); save("build/host/screen-pan.rgb565");
   if (ork_set.pan_spread != 70 || ork_set.pan_mode) { printf("screen test FAIL: GLO (%d)\n", ork_set.pan_spread); return 1; }
+  ctl.buttons = 1u << 8; groove_screen_control(); ctl.buttons = 0; groove_screen_control();   /* HOME: MIX 71/29 (55 after the ENV test, K3 -26) */
+  ctl.encoders[4] = -26; groove_screen_control(); ctl.encoders[4] = 0;
+  for(int i=0;i<40;i++)groove_screen_control(); save("build/host/screen-home-mix.rgb565");
+  if (ork_set.part[0].level != 84 || ork_set.part[1].level != 53) { printf("screen test FAIL: MIX 71/29 (%d %d)\n", ork_set.part[0].level, ork_set.part[1].level); return 1; }
   printf("screen test passed (build/host/screen-*.rgb565)\n");
   return 0;}
