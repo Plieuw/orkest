@@ -711,6 +711,23 @@ int main(int argc, char **argv)
             (void)ork_post(0, 0x80, 60, 0); render(1500);
             for (b = 0; b < 10u; b++) if (b >= nn || got[b] != WANT[b]) ok = 0;
             check("velocity pattern ACCENT 3 over an 8-note phrase: 120 70 70 runs on across the repeat", ok);
+            {   /* humanize 100 % on FLAT: the velocities spread (+-45 of 100) */
+                unsigned lo = 255, hi = 0;
+                ork_set.velo_pat = 1; ork_set.velo_human = 100;
+                render(10);
+                (void)ork_post(0, 0x90, 60, 100);
+                for (b = 0; b < 3000u * 441u / 1280u; b++) {
+                    unsigned before = ork_stat.last_note;
+                    ork_stat.last_note = 255;
+                    orkest_render(blk);
+                    if (ork_stat.last_note != 255) { if (ork_stat.last_vel < lo) lo = ork_stat.last_vel; if (ork_stat.last_vel > hi) hi = ork_stat.last_vel; }
+                    else ork_stat.last_note = (uint8_t)before;
+                }
+                (void)ork_post(0, 0x80, 60, 0); render(1500);
+                printf("  humanize 100 %%: velocities %u .. %u\n", lo, hi);
+                check("humanize: the velocities spread wide (> 50)", hi - lo > 50u);
+                ork_set.velo_human = 0;
+            }
             {   /* a pattern with rests: HALF (110, 0) over the same phrase: every other note left out */
                 unsigned q, ons = 0;
                 for (q = 0; q < ORK_NVELO && strcmp(VELO_NAME[q], "HALF"); q++) ;

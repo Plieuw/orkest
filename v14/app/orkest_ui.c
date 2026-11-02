@@ -248,7 +248,7 @@ static void part_load(unsigned p, uint8_t patch, uint8_t phrase, uint8_t speed, 
     pt->gate = gate >= 10u && gate <= 100u ? gate : 90u;
     pt->oct = (int8_t)(oct < -2 ? -2 : oct > 2 ? 2 : oct);
     pt->velo = velo < ORK_NVELO ? velo : 0u;
-    pt->depth = depth <= 100u ? depth : 100u;
+    pt->depth = depth <= 150u ? depth : 100u;
     pt->human = human <= 100u ? human : 0u;
 }
 static void settings_load(void)
@@ -755,7 +755,7 @@ void groove_screen_control(void)
             }
             if (e[1]) {
                 v = (int)pt->depth + e[1] * 5;
-                pt->depth = (uint8_t)(v < 0 ? 0 : v > 100 ? 100 : v);
+                pt->depth = (uint8_t)(v < 0 ? 0 : v > 150 ? 150 : v);
             }
             if (e[2]) {
                 v = (int)pt->human + e[2] * 5;

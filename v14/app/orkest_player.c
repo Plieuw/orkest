@@ -465,9 +465,9 @@ static FM1_AUDIO_CODE uint32_t phrase_vel(uint32_t key_vel, uint32_t own, const 
         if (!v)
             return 0;
     }
-    v = 100 + (v - 100) * (int32_t)(pt->depth > 100u ? 100u : pt->depth) / 100;
-    if (pt->human) {                             /* humanize: +- up to 30 */
-        int32_t span = (int32_t)(pt->human > 100u ? 100u : pt->human) * 30 / 100;
+    v = 100 + (v - 100) * (int32_t)(pt->depth > 150u ? 150u : pt->depth) / 100;   /* (past 100 %: more contrast) */
+    if (pt->human) {                             /* humanize: +- up to 45 */
+        int32_t span = (int32_t)(pt->human > 100u ? 100u : pt->human) * 45 / 100;
         velo_rng = velo_rng * 1664525u + 1013904223u;
         v += (int32_t)((velo_rng >> 16) % (uint32_t)(2 * span + 1)) - span;
     }
@@ -591,7 +591,7 @@ static FM1_AUDIO_CODE void phrases(void)
             {
                 const ork_pev_t *e = &PEV[ph->first + r->idx++];
                 int32_t n = scale_snap((int32_t)r->key + r->shift + e->iv);
-                uint32_t gate = pt->gate < 10u ? 10u : pt->gate > 100u ? 100u : pt->gate;
+                int32_t gate = pt->gate < 10u ? 10 : pt->gate > 100u ? 100 : (int32_t)pt->gate;
                 if (n < 0 || n > 127)
                     continue;
                 {
@@ -607,7 +607,13 @@ static FM1_AUDIO_CODE void phrases(void)
                 }
                 r->prev = (int16_t)n;
                 r->note[r->nn] = (uint8_t)n;
-                r->left[r->nn] = (int32_t)(((uint32_t)e->len * gate << 16) / 100u);
+                if (pt->human) {                 /* humanize the length too: +- up to 35 points of the gate */
+                    int32_t span = (int32_t)(pt->human > 100u ? 100u : pt->human) * 35 / 100;
+                    velo_rng = velo_rng * 1664525u + 1013904223u;
+                    gate += (int32_t)((velo_rng >> 16) % (uint32_t)(2 * span + 1)) - span;
+                    gate = gate < 5 ? 5 : gate > 100 ? 100 : gate;
+                }
+                r->left[r->nn] = (int32_t)(((uint32_t)e->len * (uint32_t)gate << 16) / 100u);
                 r->nn++;
             }
         }
