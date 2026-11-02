@@ -564,7 +564,8 @@ static FM1_AUDIO_CODE void phrases(void)
     for (i = 0; i < NRUN; i++) {
         run_t *r = &run[i];
         const struct ork_part *pt = &ork_set.part[i];
-        uint32_t inc = pt->speed == 0u ? beat_inc >> 1 : pt->speed == 2u ? beat_inc << 1 : beat_inc;
+        uint32_t inc = pt->speed == 0u ? beat_inc >> 1 : pt->speed == 2u ? beat_inc << 1 : pt->speed == 3u ? beat_inc >> 2
+                       : beat_inc;   /* 0 half, 1 as written, 2 double, 3 a quarter */
         if (!r->on)
             continue;
         if (r->phrase >= ORK_NPHRASE) {

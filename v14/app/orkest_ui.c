@@ -245,7 +245,7 @@ static void part_load(unsigned p, uint8_t patch, uint8_t phrase, uint8_t speed, 
     struct ork_part *pt = (struct ork_part *)&ork_set.part[p];
     pt->patch = patch < ORK_MAX_PATCH || (p && patch == 255u) ? patch : 0u;
     pt->phrase = phrase < ORK_NPHRASE ? phrase : 0u;
-    pt->speed = speed <= 2u ? speed : 1u;
+    pt->speed = speed <= 3u ? speed : 1u;
     pt->gate = gate >= 10u && gate <= 100u ? gate : 90u;
     pt->oct = (int8_t)(oct < -2 ? -2 : oct > 2 ? 2 : oct);
     pt->velo = velo < ORK_NVELO ? velo : 0u;
@@ -530,7 +530,7 @@ static void draw(uint32_t now)
         put_str(put_int(v, pt->gate), " %");
         knob_row(L_K4, "K4 GATE", v, TEXT);
     } else if (arp_menu) {                          /* a part's page: its sound, phrase, speed, octave */
-        static const char *const SPEED[3] = {"1/2 X", "1 X", "2 X"};
+        static const char *const SPEED[4] = {"1/2 X", "1 X", "2 X", "1/4 X"};
         unsigned pi = arp_menu / 3u;
         const struct ork_part *pt = (const struct ork_part *)&ork_set.part[pi];
         int off = pt->patch >= ork_bank.np;
@@ -542,7 +542,7 @@ static void draw(uint32_t now)
         p = put_str(p, "/");
         put_int(p, ORK_NPHRASE);
         knob_row(L_K2, "K2 PHRASE", v, TEXT);
-        knob_row(L_K3, "K3 SPEED", SPEED[pt->speed % 3u], TEXT);
+        knob_row(L_K3, "K3 SPEED", SPEED[pt->speed & 3u], TEXT);
         p = v;
         if (pt->oct > 0)
             p = put_str(p, "+");
@@ -807,9 +807,10 @@ void groove_screen_control(void)
                 v = (int)pt->phrase + e[1];
                 pt->phrase = (uint8_t)(v < 0 ? 0 : v >= (int)ORK_NPHRASE ? (int)ORK_NPHRASE - 1 : v);
             }
-            if (e[2]) {
-                v = (int)pt->speed + (e[2] > 0 ? 1 : -1);
-                pt->speed = (uint8_t)(v < 0 ? 0 : v > 2 ? 2 : v);
+            if (e[2]) {                             /* in order 1/4, 1/2, 1, 2 (stored 3, 0, 1, 2) */
+                static const uint8_t ORDER[4] = {3, 0, 1, 2}, RANK[4] = {1, 2, 3, 0};
+                v = (int)RANK[pt->speed & 3u] + (e[2] > 0 ? 1 : -1);
+                pt->speed = ORDER[v < 0 ? 0 : v > 3 ? 3 : v];
             }
             if (e[3]) {
                 v = (int)pt->oct + (e[3] > 0 ? 1 : -1);
